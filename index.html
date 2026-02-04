@@ -29,7 +29,7 @@
       <div class="grid">
         <label>
           Titel
-          <input id="title" placeholder="z.B. Sommerurlaub" />
+          <input id="title" placeholder="z. B. Sommerurlaub" />
         </label>
 
         <label>
@@ -57,12 +57,12 @@
 
         <label id="airlineWrap" class="hidden">
           Airline (optional)
-          <input id="airline" placeholder="z.B. Lufthansa" />
+          <input id="airline" placeholder="z. B. Lufthansa" />
         </label>
 
         <label>
           Notizen
-          <textarea id="notes" rows="3" placeholder="Hotel, Route, ToDos..."></textarea>
+          <textarea id="notes" rows="3"></textarea>
         </label>
       </div>
 
@@ -75,8 +75,10 @@
 
       <section>
         <h3>Das musst du beachten</h3>
-        <div id="advice" class="advice">
-                <section class="pack">
+        <div id="advice" class="advice"></div>
+      </section>
+
+      <section class="pack">
         <div class="row space">
           <h3>Packliste</h3>
           <button id="btnResetPack" class="ghost" type="button">Standard laden</button>
@@ -85,20 +87,16 @@
         <div id="packList" class="packlist"></div>
 
         <div class="row packadd">
-          <input id="packNew" placeholder="Eigenes Item hinzufügen (z.B. Schnorchel)" />
+          <input id="packNew" placeholder="Eigenes Item hinzufügen" />
           <button id="btnAddPack" class="primary" type="button">Hinzufügen</button>
         </div>
 
-        <p class="muted small">Tipp: Du kannst Items pro Reise individuell anpassen.</p>
-      </section>
-
-          <p class="muted">Wähle Land + Zeitraum, dann lädt die App Hinweise.</p>
-        </div>
+        <p class="muted small">Alles wird pro Reise gespeichert.</p>
       </section>
     </section>
 
     <footer class="foot muted">
-      Daten lokal auf deinem Gerät gespeichert.
+      Daten bleiben lokal auf deinem Gerät.
     </footer>
   </main>
 
