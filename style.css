@@ -109,3 +109,37 @@ textarea{grid-column:1 / -1; resize:vertical}
 @media (max-width:520px){
   .grid{grid-template-columns:1fr}
 }
+.pack { margin-top: 14px; }
+.packlist{ display:flex; flex-direction:column; gap:10px; }
+
+.packitem{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding:10px 12px;
+  border:1px solid var(--border);
+  border-radius:14px;
+  background:#0b1220;
+}
+.packleft{ display:flex; align-items:center; gap:10px; min-width:0; }
+.packleft input{ width:18px; height:18px; }
+.packtext{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  color:var(--text);
+}
+.packtext.done{ text-decoration: line-through; color: var(--muted); }
+.packdel{
+  border:1px solid var(--border);
+  background:transparent;
+  color:var(--muted);
+  border-radius:12px;
+  padding:8px 10px;
+}
+.packdel:hover{ border-color:#3a4b6f; color:var(--text); }
+
+.packadd{ margin-top:10px; }
+.packadd input{ flex:1; }
+.small{ font-size:12px; }
