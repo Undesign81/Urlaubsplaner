@@ -7,8 +7,9 @@ const state = {
   countries: [], // { cca2, name, lat, lon }
 };
 
-// Packlisten-Zustand (nur im Editor)
+// Editor-Zustände
 let editorPackItems = [];
+let editorRemovedSuggestions = new Set(); // Texte (lowercase), die der User bewusst entfernt hat
 
 init();
 
@@ -29,7 +30,11 @@ function bindUI() {
   $("btnDelete").addEventListener("click", deleteTrip);
 
   ["start", "end", "country"].forEach((id) => {
-    $(id).addEventListener("change", refreshAdvice);
+    $(id).addEventListener("change", () => {
+      // Bei Land/Datum Änderung: Hinweise + Packliste aktualisieren
+      refreshAdvice();
+      recalcPackList();
+    });
   });
 
   document.querySelectorAll(".segbtn").forEach((btn) => {
@@ -43,9 +48,11 @@ function bindUI() {
   $("packNew").addEventListener("keydown", (e) => {
     if (e.key === "Enter") addPackItemFromInput();
   });
+
   $("btnResetPack").addEventListener("click", () => {
-    setEditorPackItems(defaultPackItems(state.mode));
-    renderPackList();
+    // Reset = alle Vorschläge wieder erlauben + Standard neu berechnen
+    editorRemovedSuggestions = new Set();
+    recalcPackList(true);
   });
 }
 
@@ -63,9 +70,12 @@ function openEditor(trip = null) {
     $("airline").value = "";
     $("btnDelete").classList.add("hidden");
 
+    editorRemovedSuggestions = new Set();
     setMode("car");
-    setEditorPackItems(defaultPackItems(state.mode));
-    renderPackList();
+
+    // Standard-Items laden
+    editorPackItems = defaultPackItems(state.mode);
+    recalcPackList(); // fügt Länder/Zeitsachen hinzu (falls schon gewählt)
   } else {
     state.editingId = trip.id;
     $("editorTitle").textContent = "Reise bearbeiten";
@@ -79,14 +89,19 @@ function openEditor(trip = null) {
 
     setMode(trip.mode || "car");
 
+    // Packliste laden + removedSuggestions laden
+    editorRemovedSuggestions = new Set(
+      Array.isArray(trip.removedSuggestions) ? trip.removedSuggestions : []
+    );
+
     const packRaw =
       Array.isArray(trip.packItems) && trip.packItems.length
-        ? trip.packItems
+        ? trip.packItems.map(ensurePackShape)
         : defaultPackItems(state.mode);
 
-    const packClean = normalizePackItemsForMode(state.mode, packRaw);
-    setEditorPackItems(packClean);
-    renderPackList();
+    // sauberer Modus + dann neu berechnen mit Land/Datum-Suggestions
+    editorPackItems = normalizePackItemsForMode(state.mode, packRaw);
+    recalcPackList();
   }
 
   refreshAdvice();
@@ -105,32 +120,15 @@ function setMode(mode) {
 
   $("airlineWrap").classList.toggle("hidden", state.mode !== "flight");
 
-  // Wenn Editor offen ist: Packliste passend machen
+  // Wenn Editor offen: Packliste neu berechnen (Auto/Flug-Defaults + Suggestions)
   const editorOpen =
     document.getElementById("editor") &&
     !document.getElementById("editor").classList.contains("hidden");
 
   if (editorOpen) {
-    const current = getEditorPackItems();
-    if (!current || current.length === 0) {
-      setEditorPackItems(defaultPackItems(state.mode));
-    } else {
-      const customs = current.map(ensurePackShape).filter((x) => x.custom === true);
-      const base = defaultPackItems(state.mode);
-
-      const seen = new Set(base.map((x) => x.text.toLowerCase().trim()));
-      for (const c of customs) {
-        const k = c.text.toLowerCase().trim();
-        if (!seen.has(k)) {
-          base.push(c);
-          seen.add(k);
-        }
-      }
-      setEditorPackItems(base);
-    }
-
-    setEditorPackItems(normalizePackItemsForMode(state.mode, getEditorPackItems()));
-    renderPackList();
+    // erst mal normalisieren, damit z.B. "Maut" nicht im Flug bleibt
+    editorPackItems = normalizePackItemsForMode(state.mode, editorPackItems);
+    recalcPackList();
   }
 
   refreshAdvice();
@@ -244,6 +242,9 @@ function saveTrip() {
     return;
   }
 
+  // vor dem Speichern sicherstellen, dass Suggestions korrekt sind
+  recalcPackList();
+
   const trip = {
     id: state.editingId || crypto.randomUUID(),
     title: title || "Urlaub",
@@ -253,7 +254,8 @@ function saveTrip() {
     mode: state.mode,
     airline: state.mode === "flight" ? airline : "",
     notes,
-    packItems: normalizePackItemsForMode(state.mode, getEditorPackItems()),
+    packItems: normalizePackItemsForMode(state.mode, editorPackItems),
+    removedSuggestions: Array.from(editorRemovedSuggestions),
     updatedAt: new Date().toISOString(),
   };
 
@@ -277,11 +279,14 @@ function deleteTrip() {
 }
 
 function persistTrips() {
-  localStorage.setItem("urlaub_trips_v4", JSON.stringify(state.trips));
+  localStorage.setItem("urlaub_trips_v5", JSON.stringify(state.trips));
 }
 
 function loadTrips() {
   try {
+    const v5 = localStorage.getItem("urlaub_trips_v5");
+    if (v5) return JSON.parse(v5);
+
     const v4 = localStorage.getItem("urlaub_trips_v4");
     if (v4) return JSON.parse(v4);
 
@@ -300,7 +305,7 @@ function loadTrips() {
   }
 }
 
-/* ---------------- Hinweise + Temperaturen (genauer) ---------------- */
+/* ---------------- Hinweise (unverändert) ---------------- */
 
 async function refreshAdvice() {
   const countryCode = $("country").value;
@@ -347,191 +352,180 @@ async function refreshAdvice() {
     <p><strong>${state.mode === "flight" ? "Flug" : "Auto"}</strong></p>
     <ul>${transport.map((li) => `<li>${escapeHtml(li)}</li>`).join("")}</ul>
 
-    <div id="tempBlock"><p class="muted">Lade Temperatur (genauer)…</p></div>
-    <div id="aaBlock"><p class="muted">Lade Live-Daten (Auswärtiges Amt)…</p></div>
+    <p class="muted">Hinweis: Live-Daten/Temperaturen bauen wir später optional stabiler ein.</p>
   `;
+}
 
-  // Temperatur (genauer)
-  const tempBlock = $("tempBlock");
-  try {
-    const tempText = await getTemperatureForTrip(countryCode, start, end);
-    tempBlock.innerHTML = tempText
-      ? `<p><strong>Ungefähre Temperaturen</strong></p><p class="muted">${escapeHtml(tempText)}</p>`
-      : `<p class="muted">Temperatur: bitte Startdatum (und idealerweise Enddatum) setzen.</p>`;
-  } catch {
-    tempBlock.innerHTML = `<p class="muted">Konnte Temperatur gerade nicht laden.</p>`;
+/* ---------------- Packliste: Default + Land + Saison + Transport ---------------- */
+
+function recalcPackList(force = false) {
+  // Packliste im Editor aus:
+  // - Standard (Auto/Flug)
+  // - + Vorschläge nach Land & Saison
+  // - + Custom Items
+  // - Done-Status behalten, wenn Item schon existiert
+  const countryCode = $("country")?.value || "";
+  const startStr = $("start")?.value || "";
+  const endStr = $("end")?.value || "";
+
+  // Ausgang: Custom Items (behalten)
+  const current = (editorPackItems || []).map(ensurePackShape);
+
+  const customs = current.filter((x) => x.custom === true);
+
+  // Done-Status Map (nach Text)
+  const doneMap = new Map();
+  for (const it of current) {
+    doneMap.set(normKey(it.text), !!it.done);
   }
 
-  // Live-Daten (AA-Wrapper) – wenn bei dir am Handy klappt, passt es.
-  const aaBlock = $("aaBlock");
-  try {
-    const url = `https://travelwarning.api.bund.dev/country/${encodeURIComponent(countryCode)}`;
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) throw new Error("AA API not ok");
-    const data = await res.json();
+  // Basis-Defaults für den Modus
+  let base = defaultPackItems(state.mode);
 
-    const title = data?.title || data?.country?.name || "Reise- & Sicherheitshinweise";
-    const updated = data?.date || data?.updatedAt || "";
-    const link = data?.url || data?.link || data?.source || "";
-    const text = data?.content || data?.warning || data?.text || "";
+  // Vorschläge anhand Land + Saison
+  const suggestions = suggestedPackTexts(countryCode, startStr, endStr, state.mode)
+    .filter((t) => t && t.trim().length);
 
-    aaBlock.innerHTML = `
-      <p><strong>Live-Daten: ${escapeHtml(title)}</strong> ${
-        updated ? `<span class="muted">(${escapeHtml(updated)})</span>` : ""
-      }</p>
-      <p class="muted">${escapeHtml(shorten(cleanText(text), 700))}</p>
-      ${
-        link
-          ? `<p><a href="${escapeAttr(link)}" target="_blank" rel="noopener">Quelle öffnen</a></p>`
-          : `<p class="muted">Quelle: Auswärtiges Amt (OpenData)</p>`
-      }
-    `;
-  } catch {
-    aaBlock.innerHTML = `
-      <p class="muted">
-        Konnte Live-Daten gerade nicht laden (Desktop blockt evtl. CORS/Adblock).
-      </p>
-    `;
-  }
-}
+  // Entfernte Vorschläge nicht wieder hinzufügen
+  const filteredSuggestions = suggestions.filter(
+    (t) => !editorRemovedSuggestions.has(normKey(t))
+  );
 
-/* --- Temperatur: Reisezeitraum genauer --- */
+  // als Items anhängen
+  const suggestedItems = filteredSuggestions.map((text) => ({
+    id: crypto.randomUUID(),
+    text,
+    done: false,
+    custom: false,     // nicht custom
+    suggested: true,   // nur Markierung intern
+  }));
 
-async function getTemperatureForTrip(countryCode, startStr, endStr) {
-  if (!startStr && !endStr) return "";
+  // Merge: base + suggested + customs (ohne Dubletten)
+  const merged = [];
+  const seen = new Set();
 
-  const c = state.countries.find((x) => x.cca2 === countryCode);
-  if (!c || c.lat == null || c.lon == null) return "";
+  function pushItem(it) {
+    const k = normKey(it.text);
+    if (!k) return;
+    if (seen.has(k)) return;
+    seen.add(k);
 
-  const start = startStr ? new Date(startStr) : null;
-  const end = endStr ? new Date(endStr) : null;
+    // Done-Status aus vorherigem Zustand übernehmen, wenn vorhanden
+    const done = doneMap.has(k) ? doneMap.get(k) : !!it.done;
 
-  if (start && Number.isNaN(start.getTime())) return "";
-  if (end && Number.isNaN(end.getTime())) return "";
-
-  const s = start || end;
-  const e = end || start || end;
-
-  const now = new Date();
-  const diffS = Math.ceil((s - now) / 86400000);
-  const diffE = Math.ceil((e - now) / 86400000);
-
-  // innerhalb 16 Tage: Forecast Range
-  if (diffS >= -1 && diffE <= 16) {
-    return await getForecastRangeTempText(c.lat, c.lon, toISODate(s), toISODate(e));
+    merged.push({
+      id: it.id || crypto.randomUUID(),
+      text: it.text.trim(),
+      done,
+      custom: it.custom === true,
+    });
   }
 
-  // weiter weg: Monatswerte (grob), über Monate aufgeteilt
-  return await getClimateByMonthsTempText(c.lat, c.lon, s, e);
+  for (const it of base) pushItem(it);
+  for (const it of suggestedItems) pushItem(it);
+  for (const it of customs) pushItem(it);
+
+  // Modus-Reinigung (z.B. Auto-Defaults nicht in Flug)
+  editorPackItems = normalizePackItemsForMode(state.mode, merged);
+
+  renderPackList();
 }
 
-async function getForecastRangeTempText(lat, lon, startISO, endISO) {
-  const url =
-    `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lat)}` +
-    `&longitude=${encodeURIComponent(lon)}` +
-    `&daily=temperature_2m_max,temperature_2m_min&timezone=auto`;
-
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("forecast not ok");
-  const data = await res.json();
-
-  const times = data?.daily?.time || [];
-  const tmax = data?.daily?.temperature_2m_max || [];
-  const tmin = data?.daily?.temperature_2m_min || [];
-
-  const startIdx = times.indexOf(startISO);
-  if (startIdx === -1) return "";
-
-  let endIdx = times.indexOf(endISO);
-  if (endIdx === -1) endIdx = startIdx;
-
-  const a = startIdx;
-  const b = Math.max(startIdx, endIdx);
-
-  const mins = tmin.slice(a, b + 1).map(Number).filter(Number.isFinite);
-  const maxs = tmax.slice(a, b + 1).map(Number).filter(Number.isFinite);
-
-  if (!mins.length || !maxs.length) return "";
-
-  const minLow = Math.min(...mins);
-  const maxHigh = Math.max(...maxs);
-  const minAvg = avg(mins);
-  const maxAvg = avg(maxs);
-
-  if (a === b) return `Am ${startISO} etwa ${Math.round(minLow)}–${Math.round(maxHigh)}°C (Vorhersage).`;
-
-  return `Reisezeitraum: im Schnitt ca. ${Math.round(minAvg)}–${Math.round(maxAvg)}°C, Spannweite etwa ${Math.round(minLow)}–${Math.round(maxHigh)}°C (Vorhersage).`;
-}
-
-async function getClimateByMonthsTempText(lat, lon, start, end) {
-  const months = enumerateMonths(start, end);
-  const parts = [];
-  for (const mm of months) {
-    const txt = await getClimateMonthTempText(lat, lon, mm.y, mm.m);
-    if (txt) parts.push(`${monthNameDE(mm.m)}: ${txt}`);
-  }
-  return parts.join(" · ");
-}
-
-async function getClimateMonthTempText(lat, lon, year, month) {
-  const start = `${year}-${String(month).padStart(2, "0")}-01`;
-  const end = `${year}-${String(month).padStart(2, "0")}-${String(daysInMonth(year, month)).padStart(2, "0")}`;
-
-  const url =
-    `https://climate-api.open-meteo.com/v1/climate?latitude=${encodeURIComponent(lat)}` +
-    `&longitude=${encodeURIComponent(lon)}` +
-    `&start_date=${start}&end_date=${end}` +
-    `&models=MPI_ESM1_2_XR` +
-    `&daily=temperature_2m_max,temperature_2m_min&timezone=auto`;
-
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("climate not ok");
-  const data = await res.json();
-
-  const tmax = data?.daily?.temperature_2m_max || [];
-  const tmin = data?.daily?.temperature_2m_min || [];
-  if (!tmax.length || !tmin.length) return "";
-
-  const avgMax = avg(tmax.map(Number).filter(Number.isFinite));
-  const avgMin = avg(tmin.map(Number).filter(Number.isFinite));
-  return `≈ ${Math.round(avgMin)}–${Math.round(avgMax)}°C`;
-}
-
-function enumerateMonths(start, end) {
+function suggestedPackTexts(countryCode, startStr, endStr, mode) {
   const out = [];
-  const d = new Date(start.getFullYear(), start.getMonth(), 1);
-  const last = new Date(end.getFullYear(), end.getMonth(), 1);
-  while (d <= last) {
-    out.push({ y: d.getFullYear(), m: d.getMonth() + 1 });
-    d.setMonth(d.getMonth() + 1);
+
+  // Saison (grob) aus Startdatum (oder Enddatum) ableiten
+  const ref = startStr || endStr;
+  const month = ref ? safeMonth(ref) : null;
+
+  // Sommersachen (Mai–Sep)
+  if (month != null && month >= 5 && month <= 9) {
+    out.push(
+      "Sonnencreme",
+      "Badesachen",
+      "Sonnenbrille/Kappe"
+    );
+  }
+
+  // Wintersachen (Nov–Mär)
+  if (month != null && (month === 11 || month === 12 || month === 1 || month === 2 || month === 3)) {
+    out.push(
+      "Warme Jacke / Layering",
+      "Mütze/Handschuhe"
+    );
+  }
+
+  // Flug-spezifische Extras
+  if (mode === "flight") {
+    out.push(
+      "Reise-Kopien (digital/offline)",
+      "Kopfhörer"
+    );
+  }
+
+  // Auto-spezifische Extras (nur Auto)
+  if (mode === "car") {
+    out.push(
+      "Tanken/Ladestopps planen",
+      "Notfall-Kleingeld für Parken/Maut"
+    );
+  }
+
+  // Länder-Regeln (CCA2)
+  const cc = (countryCode || "").toUpperCase();
+
+  // Steckdosen/Adapter Beispiele
+  if (["GB", "IE", "MT", "CY"].includes(cc)) out.push("Reiseadapter Typ G (UK)");
+  if (["US", "CA", "MX"].includes(cc)) out.push("Reiseadapter Typ A/B (USA/Kanada)");
+  if (["AU", "NZ"].includes(cc)) out.push("Reiseadapter Typ I (AU/NZ)");
+  if (["CH"].includes(cc)) out.push("Steckeradapter Typ J (Schweiz)");
+
+  // Einreise/ETA/ESTA (stark vereinfacht – dient als Reminder)
+  if (cc === "US") out.push("ESTA prüfen/beantragen (falls nötig)");
+  if (cc === "GB") out.push("Reisepass erforderlich (UK) – Einreisebestimmungen prüfen");
+
+  // Auto: typische Sonderfälle
+  if (mode === "car") {
+    if (cc === "CH") out.push("Schweiz: Vignette (Autobahn) prüfen");
+    if (cc === "AT") out.push("Österreich: Vignette / Streckenmaut prüfen");
+    if (cc === "FR") out.push("Frankreich: Umweltplakette (Crit’Air) ggf. nötig");
+    if (cc === "IT") out.push("Italien: ZTL-Zonen (Innenstädte) beachten");
+    if (cc === "ES") out.push("Spanien: Umweltzonen in Städten prüfen");
+  }
+
+  // Grundsätzliches außerhalb EU/Schengen (Reminder)
+  // (Sehr grob, aber hilfreich als Pack-/Plan-Hinweis)
+  if (cc && !["DE","AT","CH","FR","IT","ES","NL","BE","LU","DK","SE","NO","FI","IS","IE","PT","GR","CZ","PL","SK","HU","SI","HR","RO","BG","LT","LV","EE","CY","MT"].includes(cc)) {
+    out.push("Einreisebestimmungen/Visa prüfen (Nicht-EU)");
+  }
+
+  return uniqText(out);
+}
+
+function safeMonth(dateStr) {
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.getMonth() + 1; // 1..12
+}
+
+function uniqText(arr) {
+  const out = [];
+  const seen = new Set();
+  for (const t of arr) {
+    const k = normKey(t);
+    if (!k) continue;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
   }
   return out;
 }
 
-function monthNameDE(m) {
-  const names = ["Jan","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"];
-  return names[m - 1] || `Monat ${m}`;
+function normKey(s) {
+  return String(s || "").trim().toLowerCase();
 }
 
-function toISODate(d) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function avg(arr) {
-  if (!arr.length) return 0;
-  let s = 0;
-  for (const v of arr) s += v;
-  return s / arr.length;
-}
-
-function daysInMonth(year, month) {
-  return new Date(year, month, 0).getDate();
-}
-
-/* ---------------- Packliste ---------------- */
+/* ---------------- Packliste UI ---------------- */
 
 function defaultPackItems(mode) {
   const general = [
@@ -570,8 +564,8 @@ function defaultPackItems(mode) {
 function normalizePackItemsForMode(mode, items) {
   const shaped = (Array.isArray(items) ? items : []).map(ensurePackShape);
 
-  const carDefaults = new Set(defaultPackItems("car").map((x) => x.text.toLowerCase().trim()));
-  const flightDefaults = new Set(defaultPackItems("flight").map((x) => x.text.toLowerCase().trim()));
+  const carDefaults = new Set(defaultPackItems("car").map((x) => normKey(x.text)));
+  const flightDefaults = new Set(defaultPackItems("flight").map((x) => normKey(x.text)));
 
   const dropSet = mode === "flight" ? carDefaults : flightDefaults;
   const keepSet = mode === "flight" ? flightDefaults : carDefaults;
@@ -580,10 +574,12 @@ function normalizePackItemsForMode(mode, items) {
   const seen = new Set();
 
   for (const it of shaped) {
-    const key = it.text.toLowerCase().trim();
+    const key = normKey(it.text);
 
+    // falscher Default und nicht custom -> weg
     if (dropSet.has(key) && !keepSet.has(key) && it.custom !== true) continue;
 
+    // unbekannt -> custom
     if (!carDefaults.has(key) && !flightDefaults.has(key) && it.custom !== true) {
       it.custom = true;
     }
@@ -606,20 +602,12 @@ function ensurePackShape(item) {
   };
 }
 
-function setEditorPackItems(items) {
-  editorPackItems = Array.isArray(items) ? items : [];
-}
-
-function getEditorPackItems() {
-  return editorPackItems;
-}
-
 function renderPackList() {
   const wrap = $("packList");
   wrap.innerHTML = "";
 
-  const items = getEditorPackItems();
-  if (!items || items.length === 0) {
+  const items = editorPackItems || [];
+  if (!items.length) {
     wrap.innerHTML = `<p class="muted">Noch keine Items. „Standard laden“ oder eigene Items hinzufügen.</p>`;
     return;
   }
@@ -637,8 +625,7 @@ function renderPackList() {
     cb.addEventListener("change", () => {
       item.done = cb.checked;
       renderPackList();
-      // wenn schon gespeichert: Liste aktualisiert sich beim Speichern,
-      // hier nur UI-Refresh
+      // Übersicht aktualisiert sich erst nach Speichern – absichtlich so (stabiler)
     });
 
     const text = document.createElement("div");
@@ -653,6 +640,14 @@ function renderPackList() {
     del.className = "packdel";
     del.textContent = "Löschen";
     del.addEventListener("click", () => {
+      const k = normKey(item.text);
+
+      // Wenn der User ein nicht-custom Item löscht, merken wir uns das als "entfernte Suggestion"
+      // (damit es nicht sofort wieder erscheint)
+      if (item.custom !== true) {
+        editorRemovedSuggestions.add(k);
+      }
+
       editorPackItems = editorPackItems.filter((x) => x.id !== item.id);
       renderPackList();
     });
@@ -681,19 +676,6 @@ function addPackItemFromInput() {
 
 /* ---------------- Helpers ---------------- */
 
-function shorten(s, n) {
-  s = (s || "").trim();
-  if (s.length <= n) return s;
-  return s.slice(0, n).trim() + " …";
-}
-
-function cleanText(s) {
-  return String(s || "")
-    .replace(/\r/g, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
 function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, (m) => ({
     "&": "&amp;",
@@ -702,8 +684,4 @@ function escapeHtml(s) {
     '"': "&quot;",
     "'": "&#039;",
   })[m]);
-}
-
-function escapeAttr(s) {
-  return String(s ?? "").replace(/"/g, "%22").replace(/'/g, "%27");
 }
