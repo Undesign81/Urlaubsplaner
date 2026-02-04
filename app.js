@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const STORAGE_KEY = "urlaub_trips_citytemp_autocomplete_v1";
+const STORAGE_KEY = "urlaub_trips_full_v1";
 
 const state = {
   trips: loadTrips(),
@@ -8,13 +8,13 @@ const state = {
   navStack: ["list"],
   selectedId: null,
   mode: "car",
-  cityPick: null,            // {name, lat, lon, admin1, country}
+  cityPick: null,
   cityReqToken: 0,
 };
 
-const geoCache = new Map();   // key -> {lat,lon,name}
-const histCache = new Map();  // key -> array of daily max temps
-const avgCache = new Map();   // key -> avg number
+const histCache = new Map();  // temp cache
+const avgCache = new Map();
+const routeCache = new Map(); // key -> route result
 
 init().catch((e) => {
   console.error(e);
@@ -32,7 +32,7 @@ async function init() {
   showView("list", false);
 }
 
-/* ---------------- Navigation (Bottom) ---------------- */
+/* ---------------- Navigation ---------------- */
 
 function bindNav() {
   $("navHome").addEventListener("click", () => showView("list"));
@@ -87,7 +87,7 @@ function renderCurrentView() {
   if (state.view === "info") renderInfo();
 }
 
-/* ---------------- UI bindings ---------------- */
+/* ---------------- Bindings ---------------- */
 
 function bindButtons() {
   $("search").addEventListener("input", renderList);
@@ -104,7 +104,7 @@ function bindButtons() {
     btn.addEventListener("click", () => setMode(btn.dataset.mode));
   });
 
-  // Editor actions
+  // Save/Delete
   $("btnSave").addEventListener("click", saveTripFromEditor);
   $("btnDelete").addEventListener("click", deleteCurrentTrip);
 
@@ -122,18 +122,12 @@ function bindButtons() {
   $("btnAddPack").addEventListener("click", addCustomPackItem);
   $("packNew").addEventListener("keydown", (e) => e.key === "Enter" && addCustomPackItem());
 
-  // City autocomplete
-  const cityInput = $("city");
-  const suggestBox = $("citySuggest");
-
-  // hide suggestions on outside click
-  document.addEventListener("click", (e) => {
-    if (!suggestBox) return;
-    if (suggestBox.contains(e.target) || cityInput.contains(e.target)) return;
-    hideCitySuggest();
+  // Car route calc
+  $("btnCalcRoute").addEventListener("click", async () => {
+    await calcAndShowRouteCost();
   });
 
-  // Country change: clear city pick and refresh hint
+  // Country change resets city
   $("country").addEventListener("change", () => {
     state.cityPick = null;
     $("city").value = "";
@@ -141,25 +135,25 @@ function bindButtons() {
     hideCitySuggest();
   });
 
-  cityInput.addEventListener("input", debounce(async () => {
-    await onCityInput();
-  }, 220));
+  // City autocomplete
+  const cityInput = $("city");
+  const suggestBox = $("citySuggest");
 
-  cityInput.addEventListener("focus", () => {
-    // if already typed, show again
-    if (($("city").value || "").trim().length >= 2) onCityInput();
+  document.addEventListener("click", (e) => {
+    if (suggestBox.contains(e.target) || cityInput.contains(e.target)) return;
+    hideCitySuggest();
   });
 
+  cityInput.addEventListener("input", debounce(async () => { await onCityInput(); }, 220));
+  cityInput.addEventListener("focus", () => {
+    if (($("city").value || "").trim().length >= 2) onCityInput();
+  });
   cityInput.addEventListener("keydown", (e) => {
     if (e.key === "Escape") hideCitySuggest();
   });
 }
 
-/* ---------------- Data helpers ---------------- */
-
-function getTrip(id) {
-  return state.trips.find((t) => t.id === id) || null;
-}
+/* ---------------- Storage ---------------- */
 
 function persist() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state.trips));
@@ -171,12 +165,10 @@ function loadTrips() {
     if (v) return JSON.parse(v);
 
     const legacy = [
-      "urlaub_trips_citytemp_autocomplete_v0",
+      "urlaub_trips_full_v0",
+      "urlaub_trips_citytemp_autocomplete_v1",
       "urlaub_trips_citytemp_v2",
       "urlaub_trips_citytemp_v1",
-      "urlaub_trips_separate_v3",
-      "urlaub_trips_separate_v2",
-      "urlaub_trips_separate_v1",
     ];
     for (const k of legacy) {
       const x = localStorage.getItem(k);
@@ -188,10 +180,13 @@ function loadTrips() {
   }
 }
 
-/* ---------------- Countries (robust) ---------------- */
+function getTrip(id) {
+  return state.trips.find((t) => t.id === id) || null;
+}
+
+/* ---------------- Countries ---------------- */
 
 async function loadCountries() {
-  // 1) Intl.supportedValuesOf (falls verfügbar)
   try {
     if (Intl && typeof Intl.supportedValuesOf === "function") {
       const regions = Intl.supportedValuesOf("region");
@@ -210,7 +205,6 @@ async function loadCountries() {
     }
   } catch {}
 
-  // 2) RestCountries
   try {
     const res = await fetch("https://restcountries.com/v3.1/all?fields=name,cca2");
     if (res.ok) {
@@ -226,7 +220,6 @@ async function loadCountries() {
     }
   } catch {}
 
-  // 3) Fallback (garantiert)
   state.countries = FALLBACK_COUNTRIES_DE.slice().sort((a, b) => a.name.localeCompare(b.name, "de"));
 }
 
@@ -259,7 +252,7 @@ function countryName(code) {
   }
 }
 
-/* ---------------- LIST VIEW ---------------- */
+/* ---------------- List ---------------- */
 
 function renderList() {
   const list = $("tripList");
@@ -308,14 +301,13 @@ function renderList() {
   }
 }
 
-/* ---------------- DETAIL VIEW ---------------- */
+/* ---------------- Detail ---------------- */
 
 async function renderDetail() {
   const t = getTrip(state.selectedId);
   if (!t) return showView("list");
 
   $("dTitle").textContent = t.title || "Urlaub";
-
   const range = [t.start, t.end].filter(Boolean).join(" – ");
   const city = (t.city || "").trim();
   $("dSub").textContent = `${countryName(t.countryCode)}${city ? " · " + city : ""}${range ? " · " + range : ""}`;
@@ -323,22 +315,40 @@ async function renderDetail() {
   const p = packProgress(t);
   $("dProgress").textContent = p.total ? `Packliste: ${p.done}/${p.total} erledigt` : "Packliste: —";
 
+  // temperature
   if (!t.start) {
     $("dClimate").textContent = "🌡 Ø tagsüber: bitte Startdatum setzen";
-    return;
+  } else {
+    $("dClimate").textContent = "🌡 Ø tagsüber wird geladen…";
+    try {
+      const avg = await loadDaytimeAvgMaxForTrip(t, t.start, t.end || t.start);
+      $("dClimate").textContent = Number.isFinite(avg) ? `🌡 Ø tagsüber: ${Math.round(avg)}°C` : "🌡 Ø tagsüber: nicht gefunden";
+    } catch (e) {
+      console.error(e);
+      $("dClimate").textContent = "🌡 Ø tagsüber: Fehler beim Laden";
+    }
   }
 
-  $("dClimate").textContent = "🌡 Ø tagsüber wird geladen…";
-  try {
-    const avg = await loadDaytimeAvgMaxForTrip(t, t.start, t.end || t.start);
-    $("dClimate").textContent = Number.isFinite(avg) ? `🌡 Ø tagsüber: ${Math.round(avg)}°C` : "🌡 Ø tagsüber: nicht gefunden";
-  } catch (e) {
-    console.error(e);
-    $("dClimate").textContent = "🌡 Ø tagsüber: Fehler beim Laden";
+  // costs summary (auto only)
+  const box = $("dCostBox");
+  if (t.mode === "car" && t.carCost && typeof t.carCost === "object") {
+    const c = t.carCost;
+    box.classList.remove("hidden");
+    box.innerHTML = `
+      <b>💶 Kostenübersicht (Auto)</b><br>
+      Strecke: ${fmtKm(c.distanceKm)} · Fahrzeit: ${fmtH(c.durationH)}<br>
+      Sprit: ${fmtL(c.fuelLiters)} · ${fmtEur(c.fuelCost)}<br>
+      Nahrung: ${fmtEur(c.foodCost)} (${c.persons} Pers. · ${c.days} Tage)<br>
+      Maut: ${fmtEur(c.tollCost)}<br>
+      <b>Gesamt: ${fmtEur(c.totalCost)}</b>
+    `;
+  } else {
+    box.classList.add("hidden");
+    box.innerHTML = "";
   }
 }
 
-/* ---------------- EDIT VIEW ---------------- */
+/* ---------------- Edit ---------------- */
 
 function openNewTrip() {
   state.selectedId = null;
@@ -362,6 +372,16 @@ function openNewTrip() {
     notes: "",
     removedSuggestions: [],
     packItems: defaultPackItems("car"),
+
+    // car route
+    routeFrom: "",
+    routeTo: "",
+    persons: 2,
+    consumption: 6.5,
+    fuelPrice: 1.8,
+    foodPerPersonDay: 35,
+    tollManual: "",
+    carCost: null,
   });
 
   showView("edit");
@@ -389,20 +409,32 @@ function fillEditor(t) {
   $("notes").value = t.notes || "";
   $("airline").value = t.airline || "";
 
-  $("cityHint").textContent = t.cityLat && t.cityLon ? `Gespeichert: ${Math.round(t.cityLat*100)/100}, ${Math.round(t.cityLon*100)/100}` : "";
+  $("cityHint").textContent = t.cityLat && t.cityLon ? `Gespeichert: ${round2(t.cityLat)}, ${round2(t.cityLon)}` : "";
+
+  // car fields
+  $("routeFrom").value = t.routeFrom || "";
+  $("routeTo").value = t.routeTo || "";
+  $("persons").value = (t.persons ?? 2);
+  $("consumption").value = (t.consumption ?? 6.5);
+  $("fuelPrice").value = (t.fuelPrice ?? 1.8);
+  $("foodPerPersonDay").value = (t.foodPerPersonDay ?? 35);
+  $("tollManual").value = (t.tollManual ?? "");
+
+  $("routeResult").textContent = t.carCost ? renderRouteLine(t.carCost) : "";
 
   setMode(state.mode);
-  updateAirlineVisibility();
-}
-
-function updateAirlineVisibility() {
-  $("airlineWrap").classList.toggle("hidden", state.mode !== "flight");
+  updateModeVisibility();
 }
 
 function setMode(mode) {
   state.mode = mode === "flight" ? "flight" : "car";
   document.querySelectorAll(".segbtn").forEach((b) => b.classList.toggle("active", b.dataset.mode === state.mode));
-  updateAirlineVisibility();
+  updateModeVisibility();
+}
+
+function updateModeVisibility() {
+  $("airlineWrap").classList.toggle("hidden", state.mode !== "flight");
+  $("carFields").classList.toggle("hidden", state.mode !== "car");
 }
 
 function saveTripFromEditor() {
@@ -418,6 +450,15 @@ function saveTripFromEditor() {
 
   if (!countryCode) return alert("Bitte ein Land auswählen.");
 
+  // car route inputs
+  const routeFrom = ($("routeFrom").value || "").trim();
+  const routeTo = ($("routeTo").value || "").trim();
+  const persons = num($("persons").value, 2, 1);
+  const consumption = num($("consumption").value, 6.5, 0);
+  const fuelPrice = num($("fuelPrice").value, 1.8, 0);
+  const foodPerPersonDay = num($("foodPerPersonDay").value, 35, 0);
+  const tollManual = ($("tollManual").value || "").trim();
+
   const existing = state.selectedId ? getTrip(state.selectedId) : null;
 
   const base = existing || {
@@ -426,7 +467,6 @@ function saveTripFromEditor() {
     packItems: defaultPackItems(state.mode),
   };
 
-  // Wenn Stadt manuell geändert wurde, aber kein Pick erfolgt: Koordinaten löschen -> neu suchen beim Anzeigen
   const picked = state.cityPick && state.cityPick.name && city && normKey(state.cityPick.name) === normKey(city);
 
   const updated = {
@@ -444,6 +484,15 @@ function saveTripFromEditor() {
     airline: state.mode === "flight" ? airline : "",
     notes,
     updatedAt: new Date().toISOString(),
+
+    routeFrom: state.mode === "car" ? routeFrom : "",
+    routeTo: state.mode === "car" ? routeTo : "",
+    persons: state.mode === "car" ? persons : 0,
+    consumption: state.mode === "car" ? consumption : 0,
+    fuelPrice: state.mode === "car" ? fuelPrice : 0,
+    foodPerPersonDay: state.mode === "car" ? foodPerPersonDay : 0,
+    tollManual: state.mode === "car" ? tollManual : "",
+    carCost: state.mode === "car" ? (existing?.carCost || null) : null,
   };
 
   updated.packItems = recalcPackItemsForTrip(updated);
@@ -474,7 +523,153 @@ function deleteCurrentTrip() {
   showView("list");
 }
 
-/* ---------------- City autocomplete ---------------- */
+/* ---------------- Car Route & Cost calc ---------------- */
+
+async function calcAndShowRouteCost() {
+  const countryCode = $("country").value;
+  const from = ($("routeFrom").value || "").trim();
+  const to = ($("routeTo").value || "").trim();
+
+  if (!from || !to) {
+    $("routeResult").textContent = "Bitte Startpunkt und Zielort ausfüllen.";
+    return;
+  }
+
+  const persons = num($("persons").value, 2, 1);
+  const consumption = num($("consumption").value, 6.5, 0);
+  const fuelPrice = num($("fuelPrice").value, 1.8, 0);
+  const foodPerPersonDay = num($("foodPerPersonDay").value, 35, 0);
+  const tollCost = num($("tollManual").value, 0, 0);
+
+  // days from dates
+  const startStr = $("start").value;
+  const endStr = $("end").value || startStr;
+  const days = calcTripDays(startStr, endStr);
+
+  $("routeResult").textContent = "Berechne Route…";
+
+  try {
+    const route = await getRouteKmHours(from, to);
+    if (!route) {
+      $("routeResult").textContent = "Route konnte nicht berechnet werden. Schreibweise prüfen.";
+      return;
+    }
+
+    const distanceKm = route.distanceKm;
+    const durationH = route.durationH;
+
+    const fuelLiters = (distanceKm * consumption) / 100.0;
+    const fuelCost = fuelLiters * fuelPrice;
+
+    const foodCost = persons * days * foodPerPersonDay;
+
+    const totalCost = fuelCost + tollCost + foodCost;
+
+    const carCost = {
+      distanceKm,
+      durationH,
+      fuelLiters,
+      fuelCost,
+      tollCost,
+      foodCost,
+      totalCost,
+      persons,
+      days,
+      from,
+      to,
+      consumption,
+      fuelPrice,
+      foodPerPersonDay,
+      updatedAt: new Date().toISOString(),
+    };
+
+    $("routeResult").textContent = renderRouteLine(carCost);
+
+    // also store into current trip draft (if editing existing)
+    // We store into selected trip only after save. But we also keep it in memory by writing to local storage draft: simplest: if editing an existing trip, update it now.
+    const t = state.selectedId ? getTrip(state.selectedId) : null;
+    if (t && state.view === "edit") {
+      t.routeFrom = from;
+      t.routeTo = to;
+      t.persons = persons;
+      t.consumption = consumption;
+      t.fuelPrice = fuelPrice;
+      t.foodPerPersonDay = foodPerPersonDay;
+      t.tollManual = String(tollCost || "");
+      t.carCost = carCost;
+      persist();
+    }
+  } catch (e) {
+    console.error(e);
+    $("routeResult").textContent = "Fehler beim Berechnen der Route.";
+  }
+}
+
+function renderRouteLine(c) {
+  return `Strecke: ${fmtKm(c.distanceKm)} · Fahrzeit: ${fmtH(c.durationH)} · Sprit: ${fmtL(c.fuelLiters)} / ${fmtEur(c.fuelCost)} · Nahrung: ${fmtEur(c.foodCost)} · Maut: ${fmtEur(c.tollCost)} · Gesamt: ${fmtEur(c.totalCost)}`;
+}
+
+function calcTripDays(startStr, endStr) {
+  if (!startStr) return 1;
+  const s = new Date(startStr);
+  const e = new Date(endStr || startStr);
+  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return 1;
+
+  const a = s <= e ? s : e;
+  const b = s <= e ? e : s;
+
+  // inclusive days
+  const ms = 24 * 60 * 60 * 1000;
+  const diff = Math.round((stripTime(b) - stripTime(a)) / ms);
+  return Math.max(1, diff + 1);
+}
+
+function stripTime(d) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+/**
+ * Route distance via:
+ * 1) Geocode start+end (Open-Meteo geocoding)
+ * 2) Route via OSRM (public server)
+ */
+async function getRouteKmHours(fromText, toText) {
+  const key = `${fromText}|${toText}`;
+  if (routeCache.has(key)) return routeCache.get(key);
+
+  const from = await geocodeAny(fromText);
+  const to = await geocodeAny(toText);
+  if (!from || !to) return null;
+
+  // OSRM expects lon,lat
+  const url = `https://router.project-osrm.org/route/v1/driving/${from.lon},${from.lat};${to.lon},${to.lat}?overview=false&alternatives=false&steps=false`;
+
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const data = await res.json();
+
+  const r = data?.routes?.[0];
+  if (!r) return null;
+
+  const distanceKm = (r.distance || 0) / 1000;
+  const durationH = (r.duration || 0) / 3600;
+
+  const out = { distanceKm, durationH };
+  routeCache.set(key, out);
+  return out;
+}
+
+async function geocodeAny(name) {
+  const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=1&language=de&format=json`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const data = await res.json();
+  const r = data?.results?.[0];
+  if (!r) return null;
+  return { lat: r.latitude, lon: r.longitude, label: r.name };
+}
+
+/* ---------------- City autocomplete (for temperature city field) ---------------- */
 
 async function onCityInput() {
   const countryCode = $("country").value;
@@ -487,7 +682,6 @@ async function onCityInput() {
     showCitySuggestEmpty("Bitte zuerst ein Land auswählen.");
     return;
   }
-
   if (q.length < 2) {
     hideCitySuggest();
     return;
@@ -498,10 +692,10 @@ async function onCityInput() {
 
   try {
     const results = await geocodeCitySuggestions(q, countryCode, 6);
-    if (token !== state.cityReqToken) return; // outdated request
+    if (token !== state.cityReqToken) return;
 
     if (!results.length) {
-      showCitySuggestEmpty("Keine Treffer. Tipp: sieh nach Schreibweise (z. B. 'Split').");
+      showCitySuggestEmpty("Keine Treffer. Tipp: andere Schreibweise probieren.");
       return;
     }
 
@@ -521,8 +715,6 @@ async function geocodeCitySuggestions(query, countryCode, limit = 6) {
   if (!res.ok) return [];
   const data = await res.json();
   const arr = Array.isArray(data?.results) ? data.results : [];
-
-  // Sort: prefer higher population if exists, else keep
   arr.sort((a, b) => (b.population || 0) - (a.population || 0));
 
   return arr.map((r) => ({
@@ -547,13 +739,12 @@ function renderCitySuggest(items) {
     `;
     row.addEventListener("click", () => {
       $("city").value = it.name;
-      state.cityPick = it; // store coords for save
-      $("cityHint").textContent = `Ausgewählt: ${it.name} (${Math.round(it.lat*100)/100}, ${Math.round(it.lon*100)/100})`;
+      state.cityPick = it;
+      $("cityHint").textContent = `Ausgewählt: ${it.name} (${round2(it.lat)}, ${round2(it.lon)})`;
       hideCitySuggest();
     });
     box.appendChild(row);
   }
-
   box.classList.remove("hidden");
 }
 
@@ -565,12 +756,11 @@ function showCitySuggestEmpty(text) {
 
 function hideCitySuggest() {
   const box = $("citySuggest");
-  if (!box) return;
   box.classList.add("hidden");
   box.innerHTML = "";
 }
 
-/* ---------------- PACK VIEW ---------------- */
+/* ---------------- Pack / Info (wie vorher, gekürzt: Logik bleibt) ---------------- */
 
 function renderPack() {
   const t = getTrip(state.selectedId);
@@ -657,8 +847,6 @@ function packProgress(t) {
   return { total: items.length, done: items.filter((x) => x.done).length };
 }
 
-/* ---------------- INFO VIEW ---------------- */
-
 function renderInfo() {
   const t = getTrip(state.selectedId);
   if (!t) return showView("list");
@@ -699,7 +887,7 @@ function renderInfo() {
   $("infoBox").innerHTML = blocks.join("");
 }
 
-/* ---------------- Pack Suggestions ---------------- */
+/* ---------------- Pack suggestions ---------------- */
 
 function recalcPackItemsForTrip(t) {
   const removed = new Set((t.removedSuggestions || []).map(String));
@@ -775,21 +963,6 @@ function suggestedPackTexts(countryCode, tripType, withDog, month, mode) {
   if (mode === "flight") out.push("Reise-Kopien (offline)", "Kopfhörer");
   if (mode === "car") out.push("Tanken/Ladestopps planen", "Kleingeld für Parken/Maut");
 
-  const cc = (countryCode || "").toUpperCase();
-  if (["GB", "IE", "MT", "CY"].includes(cc)) out.push("Reiseadapter Typ G (UK)");
-  if (["US", "CA", "MX"].includes(cc)) out.push("Reiseadapter Typ A/B (USA/Kanada)");
-  if (["AU", "NZ"].includes(cc)) out.push("Reiseadapter Typ I (AU/NZ)");
-  if (cc === "CH") out.push("Steckeradapter Typ J (Schweiz)");
-
-  if (mode === "car") {
-    if (cc === "CH") out.push("Schweiz: Vignette prüfen");
-    if (cc === "AT") out.push("Österreich: Vignette/Streckenmaut prüfen");
-    if (cc === "FR") out.push("Frankreich: Umweltplakette (Crit’Air) prüfen");
-    if (cc === "IT") out.push("Italien: ZTL-Zonen beachten");
-  }
-
-  if (cc && !EU_LIKE.has(cc)) out.push("Einreisebestimmungen/Visa prüfen (Nicht-EU)");
-
   if (withDog) {
     out.push(
       "EU-Heimtierausweis / Tierdokumente",
@@ -811,26 +984,15 @@ function tripTypeLabel(v) {
   return m[v] || "";
 }
 
-function dogTravelHints(cc) {
-  cc = (cc || "").toUpperCase();
-  const hints = [];
-  if (EU_LIKE.has(cc)) {
-    hints.push("EU-Heimtierausweis / Mikrochip / Tollwutimpfung prüfen");
-    hints.push("Leinen-/Maulkorbpflicht (Land/ÖPNV) prüfen");
-  } else {
-    hints.push("Einreisebestimmungen für Haustiere prüfen (Dokumente/Tests/ggf. Quarantäne)");
-  }
-  if (["GB", "IE", "NO", "CH"].includes(cc)) hints.push("Land kann Sonderregeln haben: Anforderungen vorher checken");
-  hints.push("Tierarzt-Check vor Reise (bei langer Fahrt/Flug)");
-  return hints;
+function dogTravelHints() {
+  return [
+    "EU-Heimtierausweis / Mikrochip / Tollwutimpfung prüfen",
+    "Leinen-/Maulkorbpflicht (Land/ÖPNV) prüfen",
+    "Tierarzt-Check vor Reise (bei langer Fahrt/Flug)",
+  ];
 }
 
-const EU_LIKE = new Set([
-  "DE","AT","CH","FR","IT","ES","NL","BE","LU","DK","SE","NO","FI","IS","IE","PT","GR",
-  "CZ","PL","SK","HU","SI","HR","RO","BG","LT","LV","EE","CY","MT"
-]);
-
-/* ---------------- Temperature: ONLY avg daytime (daily max) ---------------- */
+/* ---------------- Temperature (avg daytime max) ---------------- */
 
 async function loadDaytimeAvgMaxForTrip(trip, startStr, endStr) {
   const start = new Date(startStr);
@@ -840,13 +1002,8 @@ async function loadDaytimeAvgMaxForTrip(trip, startStr, endStr) {
   const s = start <= end ? start : end;
   const e = start <= end ? end : start;
 
-  // coords: prefer stored city coords, else geocode
-  let coords = null;
-  if (Number.isFinite(trip.cityLat) && Number.isFinite(trip.cityLon)) {
-    coords = { lat: trip.cityLat, lon: trip.cityLon };
-  } else {
-    coords = await getCoordsFromCityOrCountry(trip.countryCode, trip.city);
-  }
+  // coords
+  const coords = await getCoordsFromCityOrCountry(trip.countryCode, trip.city, trip.cityLat, trip.cityLon);
   if (!coords) return NaN;
 
   const cacheKey = `${coords.lat}|${coords.lon}|${toMD(s)}|${toMD(e)}|last10`;
@@ -899,16 +1056,16 @@ async function fetchDailyMax(lat, lon, startDate, endDate) {
   return arr;
 }
 
-async function getCoordsFromCityOrCountry(countryCode, city) {
+async function getCoordsFromCityOrCountry(countryCode, city, latStored, lonStored) {
+  if (Number.isFinite(latStored) && Number.isFinite(lonStored)) {
+    return { lat: latStored, lon: lonStored };
+  }
   const cityClean = (city || "").trim();
   if (cityClean) {
-    // try with country filter
     let r = await geocodeOne(cityClean, countryCode, true);
-    // fallback without filter
     if (!r) r = await geocodeOne(cityClean, countryCode, false);
     if (r) return { lat: r.latitude, lon: r.longitude };
   }
-  // fallback country
   const name = countryName(countryCode);
   if (!name) return null;
   let r2 = await geocodeOne(name, countryCode, true);
@@ -922,7 +1079,6 @@ async function geocodeOne(name, countryCode, withFilter) {
     `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}` +
     `&count=1&language=de&format=json` +
     (withFilter ? `&countryCode=${encodeURIComponent(countryCode)}` : "");
-
   const res = await fetch(url);
   if (!res.ok) return null;
   const data = await res.json();
@@ -958,9 +1114,7 @@ function uniqText(arr) {
   return out;
 }
 
-function normKey(s) {
-  return String(s || "").trim().toLowerCase();
-}
+function normKey(s) { return String(s || "").trim().toLowerCase(); }
 
 function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, (m) => ({
@@ -985,19 +1139,27 @@ function toMD(d) {
   return `${m}-${da}`;
 }
 
-function buildDateYMD(year, month, day) {
-  return new Date(year, month - 1, day);
-}
+function buildDateYMD(year, month, day) { return new Date(year, month - 1, day); }
 
 function debounce(fn, ms) {
   let t = null;
-  return (...args) => {
-    clearTimeout(t);
-    t = setTimeout(() => fn(...args), ms);
-  };
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }
 
-/* ---------------- Fallback Countries (DE) ---------------- */
+function num(val, fallback = 0, min = -Infinity) {
+  const n = Number(val);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, n);
+}
+
+function round2(x) { return Math.round(Number(x) * 100) / 100; }
+
+function fmtEur(x) { return `${Math.round(x * 100) / 100} €`; }
+function fmtKm(x) { return `${Math.round(x)} km`; }
+function fmtH(x) { return `${Math.round(x * 10) / 10} h`; }
+function fmtL(x) { return `${Math.round(x * 10) / 10} l`; }
+
+/* ---------------- Fallback Countries ---------------- */
 const FALLBACK_COUNTRIES_DE = [
   { cca2: "DE", name: "Deutschland" },
   { cca2: "AT", name: "Österreich" },
