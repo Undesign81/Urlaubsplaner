@@ -41,6 +41,7 @@ function bindNav() {
       const prev = state.navStack[state.navStack.length - 1];
       state.view = prev;
       syncViews();
+      renderCurrentView();
     } else {
       showView("list");
     }
@@ -58,6 +59,7 @@ function showView(view, push = true) {
     if (last !== view) state.navStack.push(view);
   }
   syncViews();
+  renderCurrentView();
 }
 
 function syncViews() {
@@ -76,8 +78,15 @@ function syncViews() {
   $("viewInfo").classList.toggle("hidden", state.view !== "info");
   $("viewEdit").classList.toggle("hidden", state.view !== "edit");
 
-  // Back Button deaktivieren, wenn kein zurück
   $("navBack").disabled = state.navStack.length <= 1;
+}
+
+function renderCurrentView() {
+  if (state.view === "list") renderList();
+  if (state.view === "detail") renderDetail();
+  if (state.view === "pack") renderPack();
+  if (state.view === "info") renderInfo();
+  // edit wird beim Öffnen gefüllt
 }
 
 /* ---------------- UI bindings ---------------- */
@@ -89,12 +98,10 @@ function bindButtons() {
   $("btnToPack").addEventListener("click", () => {
     if (!state.selectedId) return;
     showView("pack");
-    renderPack();
   });
   $("btnToInfo").addEventListener("click", () => {
     if (!state.selectedId) return;
     showView("info");
-    renderInfo();
   });
   $("btnToEdit").addEventListener("click", () => {
     if (!state.selectedId) return;
@@ -102,9 +109,8 @@ function bindButtons() {
   });
 
   // Editor events
-  ["country","start","end","tripType","withDog"].forEach((id) => {
+  ["country", "start", "end", "tripType", "withDog"].forEach((id) => {
     $(id).addEventListener("change", () => {
-      // nur UI, Pack/Info werden auf ihren Seiten aktualisiert
       if (state.view === "edit") updateAirlineVisibility();
     });
   });
@@ -118,14 +124,13 @@ function bindButtons() {
 
   // Pack
   $("btnPackRefresh").addEventListener("click", () => {
-    // Recalculate suggestions and keep customs/done
     const t = getTrip(state.selectedId);
     if (!t) return;
     t.packItems = recalcPackItemsForTrip(t);
     persist();
     renderPack();
-    renderList(); // list progress refresh
-    renderDetail(); // detail progress refresh
+    renderList();
+    renderDetail();
   });
 
   $("btnAddPack").addEventListener("click", addCustomPackItem);
@@ -137,7 +142,7 @@ function bindButtons() {
 /* ---------------- Data helpers ---------------- */
 
 function getTrip(id) {
-  return state.trips.find(t => t.id === id) || null;
+  return state.trips.find((t) => t.id === id) || null;
 }
 
 function persist() {
@@ -150,7 +155,7 @@ function loadTrips() {
     if (v) return JSON.parse(v);
 
     // fallback legacy keys
-    const legacy = ["urlaub_trips_clean_v1","urlaub_trips_v7","urlaub_trips_v6","urlaub_trips_v5"];
+    const legacy = ["urlaub_trips_clean_v1", "urlaub_trips_v7", "urlaub_trips_v6", "urlaub_trips_v5"];
     for (const k of legacy) {
       const x = localStorage.getItem(k);
       if (x) return JSON.parse(x);
@@ -168,15 +173,15 @@ async function loadCountries() {
     const res = await fetch("https://restcountries.com/v3.1/all?fields=name,cca2,capitalInfo,latlng");
     const data = await res.json();
     state.countries = (Array.isArray(data) ? data : [])
-      .filter(x => x?.cca2 && x?.name?.common)
-      .map(x => {
+      .filter((x) => x?.cca2 && x?.name?.common)
+      .map((x) => {
         const ll =
           (x.capitalInfo && Array.isArray(x.capitalInfo.latlng) && x.capitalInfo.latlng.length === 2)
             ? x.capitalInfo.latlng
             : (Array.isArray(x.latlng) && x.latlng.length === 2 ? x.latlng : [null, null]);
         return { cca2: x.cca2, name: x.name.common, lat: ll[0], lon: ll[1] };
       })
-      .sort((a,b) => a.name.localeCompare(b.name, "de"));
+      .sort((a, b) => a.name.localeCompare(b.name, "de"));
   } catch {
     state.countries = [];
   }
@@ -200,7 +205,7 @@ function fillCountrySelect() {
 }
 
 function countryName(code) {
-  const c = state.countries.find(x => x.cca2 === code);
+  const c = state.countries.find((x) => x.cca2 === code);
   return c ? c.name : (code || "");
 }
 
@@ -214,9 +219,9 @@ function renderList() {
   list.innerHTML = "";
 
   const q = ($("search").value || "").trim().toLowerCase();
-  const sorted = [...state.trips].sort((a,b) => (a.start || "").localeCompare(b.start || ""));
+  const sorted = [...state.trips].sort((a, b) => (a.start || "").localeCompare(b.start || ""));
   const filtered = q
-    ? sorted.filter(t => {
+    ? sorted.filter((t) => {
         const name = countryName(t.countryCode);
         return `${t.title || ""} ${name}`.toLowerCase().includes(q);
       })
@@ -248,7 +253,6 @@ function renderList() {
 
     el.addEventListener("click", () => {
       state.selectedId = t.id;
-      renderDetail();
       showView("detail");
     });
 
@@ -272,8 +276,7 @@ async function renderDetail() {
   const p = packProgress(t);
   $("dProgress").textContent = p.total ? `Packliste: ${p.done}/${p.total} erledigt` : "Packliste: —";
 
-  // Klima: Mittelwerte (Monate im Zeitraum)
-  $("dClimate").textContent = "🌡 Typische Temperaturen (Klimamittel) werden geladen…";
+  $("dClimate").textContent = "🌡 Klimamittel werden geladen…";
   try {
     const climate = await loadClimateAverage(t.countryCode, t.start || t.end, t.end || t.start);
     $("dClimate").textContent = climate ? `🌡 Klimamittel: ${climate}` : "🌡 Klimamittel: —";
@@ -287,6 +290,7 @@ async function renderDetail() {
 function openNewTrip() {
   state.selectedId = null;
   state.mode = "car";
+
   fillEditor({
     id: null,
     title: "",
@@ -301,6 +305,7 @@ function openNewTrip() {
     removedSuggestions: [],
     packItems: defaultPackItems("car"),
   });
+
   showView("edit");
 }
 
@@ -332,8 +337,8 @@ function updateAirlineVisibility() {
 }
 
 function setMode(mode) {
-  state.mode = (mode === "flight") ? "flight" : "car";
-  document.querySelectorAll(".segbtn").forEach(b => {
+  state.mode = mode === "flight" ? "flight" : "car";
+  document.querySelectorAll(".segbtn").forEach((b) => {
     b.classList.toggle("active", b.dataset.mode === state.mode);
   });
   updateAirlineVisibility();
@@ -376,11 +381,11 @@ function saveTripFromEditor() {
     updatedAt: new Date().toISOString(),
   };
 
-  // Packliste neu berechnen (aber Done/Custom behalten)
+  // Packliste neu berechnen, aber Done/Custom behalten
   updated.packItems = recalcPackItemsForTrip(updated);
 
   if (existing) {
-    const idx = state.trips.findIndex(x => x.id === existing.id);
+    const idx = state.trips.findIndex((x) => x.id === existing.id);
     state.trips[idx] = updated;
   } else {
     state.trips.push(updated);
@@ -390,7 +395,6 @@ function saveTripFromEditor() {
   state.selectedId = updated.id;
 
   renderList();
-  renderDetail();
   showView("detail");
 }
 
@@ -401,7 +405,7 @@ function deleteCurrentTrip() {
   }
   if (!confirm("Diese Reise wirklich löschen?")) return;
 
-  state.trips = state.trips.filter(t => t.id !== state.selectedId);
+  state.trips = state.trips.filter((t) => t.id !== state.selectedId);
   persist();
 
   state.selectedId = null;
@@ -421,13 +425,13 @@ function renderPack() {
   const list = $("packList");
   list.innerHTML = "";
 
-  const p = packProgress(t);
-  $("pProgress").textContent = p.total ? `${p.done} von ${p.total} erledigt` : "—";
-
   if (!Array.isArray(t.packItems) || !t.packItems.length) {
     t.packItems = recalcPackItemsForTrip(t);
     persist();
   }
+
+  const p = packProgress(t);
+  $("pProgress").textContent = p.total ? `${p.done} von ${p.total} erledigt` : "—";
 
   for (const item of t.packItems) {
     const row = document.createElement("div");
@@ -459,13 +463,12 @@ function renderPack() {
     del.type = "button";
     del.textContent = "Löschen";
     del.addEventListener("click", () => {
-      // Wenn kein Custom, merken wir es (damit Vorschlag nicht wieder kommt)
       if (!item.custom) {
         const k = normKey(item.text);
         if (!Array.isArray(t.removedSuggestions)) t.removedSuggestions = [];
         if (!t.removedSuggestions.includes(k)) t.removedSuggestions.push(k);
       }
-      t.packItems = t.packItems.filter(x => x.id !== item.id);
+      t.packItems = t.packItems.filter((x) => x.id !== item.id);
       persist();
       renderPack();
       renderList();
@@ -503,13 +506,13 @@ function addCustomPackItem() {
 function packProgress(t) {
   const items = Array.isArray(t.packItems) ? t.packItems : [];
   const total = items.length;
-  const done = items.filter(x => x.done).length;
+  const done = items.filter((x) => x.done).length;
   return { done, total };
 }
 
 /* ---------------- INFO VIEW ---------------- */
 
-async function renderInfo() {
+function renderInfo() {
   const t = getTrip(state.selectedId);
   if (!t) {
     showView("list");
@@ -558,15 +561,15 @@ function recalcPackItemsForTrip(t) {
   const removed = new Set((t.removedSuggestions || []).map(String));
 
   const current = Array.isArray(t.packItems) ? t.packItems.map(ensurePackShape) : [];
-  const customs = current.filter(x => x.custom === true);
+  const customs = current.filter((x) => x.custom === true);
 
-  const doneMap = new Map(current.map(x => [normKey(x.text), !!x.done]));
+  const doneMap = new Map(current.map((x) => [normKey(x.text), !!x.done]));
 
   const base = defaultPackItems(t.mode || "car");
   const month = (t.start || t.end) ? safeMonth(t.start || t.end) : null;
 
   const suggTexts = suggestedPackTexts(t.countryCode, t.tripType, t.withDog, month, t.mode || "car")
-    .filter(txt => !removed.has(normKey(txt)));
+    .filter((txt) => !removed.has(normKey(txt)));
 
   const merged = [];
   const seen = new Set();
@@ -584,7 +587,7 @@ function recalcPackItemsForTrip(t) {
   };
 
   base.forEach(push);
-  suggTexts.forEach(txt => push({ text: txt, done:false, custom:false }));
+  suggTexts.forEach((txt) => push({ text: txt, done: false, custom: false }));
   customs.forEach(push);
 
   return merged;
@@ -610,8 +613,8 @@ function defaultPackItems(mode) {
     "Koffergewicht/Größe prüfen",
     "Flüssigkeiten (100ml) Beutel",
   ];
-  const merged = (mode === "flight") ? general.concat(flight) : general.concat(car);
-  return merged.map(text => ({ id: crypto.randomUUID(), text, done:false, custom:false }));
+  const merged = mode === "flight" ? general.concat(flight) : general.concat(car);
+  return merged.map((text) => ({ id: crypto.randomUUID(), text, done: false, custom: false }));
 }
 
 function suggestedPackTexts(countryCode, tripType, withDog, month, mode) {
@@ -635,9 +638,9 @@ function suggestedPackTexts(countryCode, tripType, withDog, month, mode) {
 
   // Land (Adapter + Auto-Reminder)
   const cc = (countryCode || "").toUpperCase();
-  if (["GB","IE","MT","CY"].includes(cc)) out.push("Reiseadapter Typ G (UK)");
-  if (["US","CA","MX"].includes(cc)) out.push("Reiseadapter Typ A/B (USA/Kanada)");
-  if (["AU","NZ"].includes(cc)) out.push("Reiseadapter Typ I (AU/NZ)");
+  if (["GB", "IE", "MT", "CY"].includes(cc)) out.push("Reiseadapter Typ G (UK)");
+  if (["US", "CA", "MX"].includes(cc)) out.push("Reiseadapter Typ A/B (USA/Kanada)");
+  if (["AU", "NZ"].includes(cc)) out.push("Reiseadapter Typ I (AU/NZ)");
   if (cc === "CH") out.push("Steckeradapter Typ J (Schweiz)");
 
   if (mode === "car") {
@@ -687,7 +690,7 @@ function dogTravelHints(cc) {
   } else {
     hints.push("Einreisebestimmungen für Haustiere prüfen (Dokumente/Tests/ggf. Quarantäne)");
   }
-  if (["GB","IE","NO","CH"].includes(cc)) hints.push("Land kann Sonderregeln haben: Anforderungen vorher checken");
+  if (["GB", "IE", "NO", "CH"].includes(cc)) hints.push("Land kann Sonderregeln haben: Anforderungen vorher checken");
   hints.push("Tierarzt-Check vor Reise (bei langer Fahrt/Flug)");
   return hints;
 }
@@ -701,7 +704,7 @@ const EU_LIKE = new Set([
 
 async function loadClimateAverage(countryCode, startStr, endStr) {
   if (!countryCode || !startStr) return "";
-  const c = state.countries.find(x => x.cca2 === countryCode);
+  const c = state.countries.find((x) => x.cca2 === countryCode);
   if (!c || c.lat == null || c.lon == null) return "";
 
   const start = new Date(startStr);
@@ -799,15 +802,3 @@ function escapeHtml(s) {
     "'": "&#039;",
   })[m]);
 }
-
-/* ---------------- View entry hooks ---------------- */
-// Wenn du auf Detail/Pack/Info wechselst, rendere den Inhalt passend.
-const _origShowView = showView;
-showView = function(view, push = true) {
-  _origShowView(view, push);
-
-  if (view === "list") renderList();
-  if (view === "detail") renderDetail();
-  if (view === "pack") renderPack();
-  if (view === "info") renderInfo();
-};
