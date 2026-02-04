@@ -7,9 +7,8 @@ const state = {
   countries: [], // { cca2, name, lat, lon }
 };
 
-// Editor-Zustände
 let editorPackItems = [];
-let editorRemovedSuggestions = new Set(); // Texte (lowercase), die der User bewusst entfernt hat
+let editorRemovedSuggestions = new Set(); // Texte (lowercase) die bewusst entfernt wurden
 
 init();
 
@@ -29,9 +28,8 @@ function bindUI() {
   $("btnSave").addEventListener("click", saveTrip);
   $("btnDelete").addEventListener("click", deleteTrip);
 
-  ["start", "end", "country"].forEach((id) => {
+  ["start", "end", "country", "tripType"].forEach((id) => {
     $(id).addEventListener("change", () => {
-      // Bei Land/Datum Änderung: Hinweise + Packliste aktualisieren
       refreshAdvice();
       recalcPackList();
     });
@@ -43,14 +41,12 @@ function bindUI() {
 
   $("airline").addEventListener("input", refreshAdvice);
 
-  // Packliste
   $("btnAddPack").addEventListener("click", addPackItemFromInput);
   $("packNew").addEventListener("keydown", (e) => {
     if (e.key === "Enter") addPackItemFromInput();
   });
 
   $("btnResetPack").addEventListener("click", () => {
-    // Reset = alle Vorschläge wieder erlauben + Standard neu berechnen
     editorRemovedSuggestions = new Set();
     recalcPackList(true);
   });
@@ -66,6 +62,7 @@ function openEditor(trip = null) {
     $("country").value = "";
     $("start").value = "";
     $("end").value = "";
+    $("tripType").value = "city";
     $("notes").value = "";
     $("airline").value = "";
     $("btnDelete").classList.add("hidden");
@@ -73,9 +70,8 @@ function openEditor(trip = null) {
     editorRemovedSuggestions = new Set();
     setMode("car");
 
-    // Standard-Items laden
     editorPackItems = defaultPackItems(state.mode);
-    recalcPackList(); // fügt Länder/Zeitsachen hinzu (falls schon gewählt)
+    recalcPackList();
   } else {
     state.editingId = trip.id;
     $("editorTitle").textContent = "Reise bearbeiten";
@@ -83,13 +79,13 @@ function openEditor(trip = null) {
     $("country").value = trip.countryCode || "";
     $("start").value = trip.start || "";
     $("end").value = trip.end || "";
+    $("tripType").value = trip.tripType || "city";
     $("notes").value = trip.notes || "";
     $("airline").value = trip.airline || "";
     $("btnDelete").classList.remove("hidden");
 
     setMode(trip.mode || "car");
 
-    // Packliste laden + removedSuggestions laden
     editorRemovedSuggestions = new Set(
       Array.isArray(trip.removedSuggestions) ? trip.removedSuggestions : []
     );
@@ -99,7 +95,6 @@ function openEditor(trip = null) {
         ? trip.packItems.map(ensurePackShape)
         : defaultPackItems(state.mode);
 
-    // sauberer Modus + dann neu berechnen mit Land/Datum-Suggestions
     editorPackItems = normalizePackItemsForMode(state.mode, packRaw);
     recalcPackList();
   }
@@ -120,13 +115,11 @@ function setMode(mode) {
 
   $("airlineWrap").classList.toggle("hidden", state.mode !== "flight");
 
-  // Wenn Editor offen: Packliste neu berechnen (Auto/Flug-Defaults + Suggestions)
   const editorOpen =
     document.getElementById("editor") &&
     !document.getElementById("editor").classList.contains("hidden");
 
   if (editorOpen) {
-    // erst mal normalisieren, damit z.B. "Maut" nicht im Flug bleibt
     editorPackItems = normalizePackItemsForMode(state.mode, editorPackItems);
     recalcPackList();
   }
@@ -134,7 +127,7 @@ function setMode(mode) {
   refreshAdvice();
 }
 
-/* ---------------- Übersicht: Reisenliste + offene Packliste ---------------- */
+/* ---------------- Übersicht ---------------- */
 
 function renderTrips() {
   const wrap = $("tripList");
@@ -150,11 +143,12 @@ function renderTrips() {
     el.className = "item";
 
     const openInfo = buildOpenPackInfo(t);
+    const typeLabel = tripTypeLabel(t.tripType);
 
     el.innerHTML = `
       <div class="meta">
         <div class="title">${escapeHtml(t.title || "Reise")}</div>
-        <div class="sub">${escapeHtml(fmtTripSub(t))}</div>
+        <div class="sub">${escapeHtml(fmtTripSub(t))}${typeLabel ? " · " + escapeHtml(typeLabel) : ""}</div>
         ${openInfo ? `<div class="sub">${escapeHtml(openInfo)}</div>` : ``}
       </div>
       <div class="sub">${t.mode === "flight" ? "✈️" : "🚗"}</div>
@@ -182,6 +176,18 @@ function fmtTripSub(t) {
   const name = c ? c.name : t.countryCode || "";
   const range = [t.start, t.end].filter(Boolean).join(" – ");
   return `${name}${range ? " · " + range : ""}`;
+}
+
+function tripTypeLabel(v) {
+  const m = {
+    city: "Städtetrip",
+    beach: "Strand",
+    hiking: "Wandern/Natur",
+    ski: "Ski/Winter",
+    roadtrip: "Roadtrip",
+    camping: "Camping",
+  };
+  return m[v] || "";
 }
 
 /* ---------------- Länder ---------------- */
@@ -234,6 +240,7 @@ function saveTrip() {
   const countryCode = $("country").value;
   const start = $("start").value;
   const end = $("end").value;
+  const tripType = $("tripType").value;
   const notes = $("notes").value.trim();
   const airline = ($("airline").value || "").trim();
 
@@ -242,7 +249,6 @@ function saveTrip() {
     return;
   }
 
-  // vor dem Speichern sicherstellen, dass Suggestions korrekt sind
   recalcPackList();
 
   const trip = {
@@ -251,6 +257,7 @@ function saveTrip() {
     countryCode,
     start,
     end,
+    tripType,
     mode: state.mode,
     airline: state.mode === "flight" ? airline : "",
     notes,
@@ -279,25 +286,19 @@ function deleteTrip() {
 }
 
 function persistTrips() {
-  localStorage.setItem("urlaub_trips_v5", JSON.stringify(state.trips));
+  localStorage.setItem("urlaub_trips_v6", JSON.stringify(state.trips));
 }
 
 function loadTrips() {
   try {
+    const v6 = localStorage.getItem("urlaub_trips_v6");
+    if (v6) return JSON.parse(v6);
+
     const v5 = localStorage.getItem("urlaub_trips_v5");
     if (v5) return JSON.parse(v5);
 
     const v4 = localStorage.getItem("urlaub_trips_v4");
     if (v4) return JSON.parse(v4);
-
-    const v3 = localStorage.getItem("urlaub_trips_v3");
-    if (v3) return JSON.parse(v3);
-
-    const v2 = localStorage.getItem("urlaub_trips_v2");
-    if (v2) return JSON.parse(v2);
-
-    const v1 = localStorage.getItem("urlaub_trips_v1");
-    if (v1) return JSON.parse(v1);
 
     return [];
   } catch {
@@ -305,7 +306,7 @@ function loadTrips() {
   }
 }
 
-/* ---------------- Hinweise (unverändert) ---------------- */
+/* ---------------- Hinweise ---------------- */
 
 async function refreshAdvice() {
   const countryCode = $("country").value;
@@ -345,62 +346,39 @@ async function refreshAdvice() {
     <p><strong>${escapeHtml(countryName)}</strong> · ${escapeHtml(
       [start, end].filter(Boolean).join(" – ") || "Datum noch offen"
     )}</p>
-
-    <p class="muted">Checkliste:</p>
     <ul>${general.map((li) => `<li>${escapeHtml(li)}</li>`).join("")}</ul>
-
     <p><strong>${state.mode === "flight" ? "Flug" : "Auto"}</strong></p>
     <ul>${transport.map((li) => `<li>${escapeHtml(li)}</li>`).join("")}</ul>
-
-    <p class="muted">Hinweis: Live-Daten/Temperaturen bauen wir später optional stabiler ein.</p>
   `;
 }
 
-/* ---------------- Packliste: Default + Land + Saison + Transport ---------------- */
+/* ---------------- Packliste: Reiseart + Land + Saison + Transport ---------------- */
 
 function recalcPackList(force = false) {
-  // Packliste im Editor aus:
-  // - Standard (Auto/Flug)
-  // - + Vorschläge nach Land & Saison
-  // - + Custom Items
-  // - Done-Status behalten, wenn Item schon existiert
   const countryCode = $("country")?.value || "";
   const startStr = $("start")?.value || "";
   const endStr = $("end")?.value || "";
+  const tripType = $("tripType")?.value || "city";
 
-  // Ausgang: Custom Items (behalten)
   const current = (editorPackItems || []).map(ensurePackShape);
-
   const customs = current.filter((x) => x.custom === true);
 
-  // Done-Status Map (nach Text)
   const doneMap = new Map();
-  for (const it of current) {
-    doneMap.set(normKey(it.text), !!it.done);
-  }
+  for (const it of current) doneMap.set(normKey(it.text), !!it.done);
 
-  // Basis-Defaults für den Modus
-  let base = defaultPackItems(state.mode);
+  const base = defaultPackItems(state.mode);
 
-  // Vorschläge anhand Land + Saison
-  const suggestions = suggestedPackTexts(countryCode, startStr, endStr, state.mode)
-    .filter((t) => t && t.trim().length);
+  const suggestions = suggestedPackTexts(countryCode, startStr, endStr, state.mode, tripType)
+    .filter((t) => t && t.trim().length)
+    .filter((t) => !editorRemovedSuggestions.has(normKey(t)));
 
-  // Entfernte Vorschläge nicht wieder hinzufügen
-  const filteredSuggestions = suggestions.filter(
-    (t) => !editorRemovedSuggestions.has(normKey(t))
-  );
-
-  // als Items anhängen
-  const suggestedItems = filteredSuggestions.map((text) => ({
+  const suggestedItems = suggestions.map((text) => ({
     id: crypto.randomUUID(),
     text,
     done: false,
-    custom: false,     // nicht custom
-    suggested: true,   // nur Markierung intern
+    custom: false,
   }));
 
-  // Merge: base + suggested + customs (ohne Dubletten)
   const merged = [];
   const seen = new Set();
 
@@ -409,82 +387,53 @@ function recalcPackList(force = false) {
     if (!k) return;
     if (seen.has(k)) return;
     seen.add(k);
-
-    // Done-Status aus vorherigem Zustand übernehmen, wenn vorhanden
     const done = doneMap.has(k) ? doneMap.get(k) : !!it.done;
-
-    merged.push({
-      id: it.id || crypto.randomUUID(),
-      text: it.text.trim(),
-      done,
-      custom: it.custom === true,
-    });
+    merged.push({ id: it.id || crypto.randomUUID(), text: it.text.trim(), done, custom: it.custom === true });
   }
 
   for (const it of base) pushItem(it);
   for (const it of suggestedItems) pushItem(it);
   for (const it of customs) pushItem(it);
 
-  // Modus-Reinigung (z.B. Auto-Defaults nicht in Flug)
   editorPackItems = normalizePackItemsForMode(state.mode, merged);
-
   renderPackList();
 }
 
-function suggestedPackTexts(countryCode, startStr, endStr, mode) {
+function suggestedPackTexts(countryCode, startStr, endStr, mode, tripType) {
   const out = [];
 
-  // Saison (grob) aus Startdatum (oder Enddatum) ableiten
+  // Saison (grob) aus Start/End
   const ref = startStr || endStr;
   const month = ref ? safeMonth(ref) : null;
 
-  // Sommersachen (Mai–Sep)
-  if (month != null && month >= 5 && month <= 9) {
-    out.push(
-      "Sonnencreme",
-      "Badesachen",
-      "Sonnenbrille/Kappe"
-    );
-  }
+  if (month != null && month >= 5 && month <= 9) out.push("Sonnencreme", "Sonnenbrille/Kappe");
+  if (month != null && (month === 11 || month === 12 || month <= 3)) out.push("Warme Jacke / Layering", "Mütze/Handschuhe");
 
-  // Wintersachen (Nov–Mär)
-  if (month != null && (month === 11 || month === 12 || month === 1 || month === 2 || month === 3)) {
-    out.push(
-      "Warme Jacke / Layering",
-      "Mütze/Handschuhe"
-    );
-  }
+  // Reiseart
+  if (tripType === "beach") out.push("Badesachen", "Badelatschen", "After-Sun", "Schnorchel (optional)");
+  if (tripType === "city") out.push("Bequeme Schuhe", "Tagesrucksack", "Powerbank");
+  if (tripType === "hiking") out.push("Wanderschuhe", "Regenjacke", "Trinkflasche", "Blasenpflaster");
+  if (tripType === "ski") out.push("Skibrille", "Handwärmer", "Thermounterwäsche", "Sonnencreme (Schnee)");
+  if (tripType === "roadtrip") out.push("Kfz-Ladegerät", "Offline-Karten", "Snacks/Wasser", "Playlist/Podcasts");
+  if (tripType === "camping") out.push("Taschenlampe/Stirnlampe", "Powerbank", "Mückenschutz", "Campingbesteck");
 
-  // Flug-spezifische Extras
-  if (mode === "flight") {
-    out.push(
-      "Reise-Kopien (digital/offline)",
-      "Kopfhörer"
-    );
-  }
+  // Transport
+  if (mode === "flight") out.push("Reise-Kopien (digital/offline)", "Kopfhörer");
+  if (mode === "car") out.push("Tanken/Ladestopps planen", "Notfall-Kleingeld für Parken/Maut");
 
-  // Auto-spezifische Extras (nur Auto)
-  if (mode === "car") {
-    out.push(
-      "Tanken/Ladestopps planen",
-      "Notfall-Kleingeld für Parken/Maut"
-    );
-  }
-
-  // Länder-Regeln (CCA2)
   const cc = (countryCode || "").toUpperCase();
 
-  // Steckdosen/Adapter Beispiele
+  // Adapter
   if (["GB", "IE", "MT", "CY"].includes(cc)) out.push("Reiseadapter Typ G (UK)");
   if (["US", "CA", "MX"].includes(cc)) out.push("Reiseadapter Typ A/B (USA/Kanada)");
   if (["AU", "NZ"].includes(cc)) out.push("Reiseadapter Typ I (AU/NZ)");
   if (["CH"].includes(cc)) out.push("Steckeradapter Typ J (Schweiz)");
 
-  // Einreise/ETA/ESTA (stark vereinfacht – dient als Reminder)
+  // Visa/ESTA Reminder (grob)
   if (cc === "US") out.push("ESTA prüfen/beantragen (falls nötig)");
   if (cc === "GB") out.push("Reisepass erforderlich (UK) – Einreisebestimmungen prüfen");
 
-  // Auto: typische Sonderfälle
+  // Auto Länderhinweise
   if (mode === "car") {
     if (cc === "CH") out.push("Schweiz: Vignette (Autobahn) prüfen");
     if (cc === "AT") out.push("Österreich: Vignette / Streckenmaut prüfen");
@@ -493,19 +442,21 @@ function suggestedPackTexts(countryCode, startStr, endStr, mode) {
     if (cc === "ES") out.push("Spanien: Umweltzonen in Städten prüfen");
   }
 
-  // Grundsätzliches außerhalb EU/Schengen (Reminder)
-  // (Sehr grob, aber hilfreich als Pack-/Plan-Hinweis)
-  if (cc && !["DE","AT","CH","FR","IT","ES","NL","BE","LU","DK","SE","NO","FI","IS","IE","PT","GR","CZ","PL","SK","HU","SI","HR","RO","BG","LT","LV","EE","CY","MT"].includes(cc)) {
-    out.push("Einreisebestimmungen/Visa prüfen (Nicht-EU)");
-  }
+  // Nicht-EU Reminder (grob)
+  if (cc && !EU_LIKE.has(cc)) out.push("Einreisebestimmungen/Visa prüfen (Nicht-EU)");
 
   return uniqText(out);
 }
 
+const EU_LIKE = new Set([
+  "DE","AT","CH","FR","IT","ES","NL","BE","LU","DK","SE","NO","FI","IS","IE","PT","GR",
+  "CZ","PL","SK","HU","SI","HR","RO","BG","LT","LV","EE","CY","MT"
+]);
+
 function safeMonth(dateStr) {
   const d = new Date(dateStr);
   if (Number.isNaN(d.getTime())) return null;
-  return d.getMonth() + 1; // 1..12
+  return d.getMonth() + 1;
 }
 
 function uniqText(arr) {
@@ -513,8 +464,7 @@ function uniqText(arr) {
   const seen = new Set();
   for (const t of arr) {
     const k = normKey(t);
-    if (!k) continue;
-    if (seen.has(k)) continue;
+    if (!k || seen.has(k)) continue;
     seen.add(k);
     out.push(t);
   }
@@ -575,11 +525,8 @@ function normalizePackItemsForMode(mode, items) {
 
   for (const it of shaped) {
     const key = normKey(it.text);
-
-    // falscher Default und nicht custom -> weg
     if (dropSet.has(key) && !keepSet.has(key) && it.custom !== true) continue;
 
-    // unbekannt -> custom
     if (!carDefaults.has(key) && !flightDefaults.has(key) && it.custom !== true) {
       it.custom = true;
     }
@@ -625,7 +572,6 @@ function renderPackList() {
     cb.addEventListener("change", () => {
       item.done = cb.checked;
       renderPackList();
-      // Übersicht aktualisiert sich erst nach Speichern – absichtlich so (stabiler)
     });
 
     const text = document.createElement("div");
@@ -641,12 +587,7 @@ function renderPackList() {
     del.textContent = "Löschen";
     del.addEventListener("click", () => {
       const k = normKey(item.text);
-
-      // Wenn der User ein nicht-custom Item löscht, merken wir uns das als "entfernte Suggestion"
-      // (damit es nicht sofort wieder erscheint)
-      if (item.custom !== true) {
-        editorRemovedSuggestions.add(k);
-      }
+      if (item.custom !== true) editorRemovedSuggestions.add(k);
 
       editorPackItems = editorPackItems.filter((x) => x.id !== item.id);
       renderPackList();
