@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const STORAGE_KEY = "urlaub_trips_separate_v2";
+const STORAGE_KEY = "urlaub_trips_separate_v3";
 
 const state = {
   trips: loadTrips(),
@@ -10,8 +10,9 @@ const state = {
   mode: "car",           // editor transport
 };
 
-const climateCache = new Map();  // key -> {min,max}
-const geoCache = new Map();      // countryCode -> {lat,lon}
+const geoCache = new Map();        // countryCode -> {lat,lon}
+const histCache = new Map();       // key -> array of daily max temps
+const avgCache = new Map();        // key -> avg number
 
 init().catch((e) => {
   console.error(e);
@@ -82,7 +83,6 @@ function renderCurrentView() {
   if (state.view === "detail") renderDetail();
   if (state.view === "pack") renderPack();
   if (state.view === "info") renderInfo();
-  // edit wird beim Öffnen gefüllt
 }
 
 /* ---------------- UI bindings ---------------- */
@@ -90,7 +90,6 @@ function renderCurrentView() {
 function bindButtons() {
   $("search").addEventListener("input", renderList);
 
-  // Detail actions
   $("btnToPack").addEventListener("click", () => state.selectedId && showView("pack"));
   $("btnToInfo").addEventListener("click", () => state.selectedId && showView("info"));
   $("btnToEdit").addEventListener("click", () => {
@@ -98,7 +97,6 @@ function bindButtons() {
     openEditTrip(getTrip(state.selectedId));
   });
 
-  // Editor events
   ["country", "start", "end", "tripType", "withDog"].forEach((id) => {
     $(id).addEventListener("change", () => {
       if (state.view === "edit") updateAirlineVisibility();
@@ -112,7 +110,6 @@ function bindButtons() {
   $("btnSave").addEventListener("click", saveTripFromEditor);
   $("btnDelete").addEventListener("click", deleteCurrentTrip);
 
-  // Pack
   $("btnPackRefresh").addEventListener("click", () => {
     const t = getTrip(state.selectedId);
     if (!t) return;
@@ -142,8 +139,8 @@ function loadTrips() {
     const v = localStorage.getItem(STORAGE_KEY);
     if (v) return JSON.parse(v);
 
-    // fallback legacy keys
     const legacy = [
+      "urlaub_trips_separate_v2",
       "urlaub_trips_separate_v1",
       "urlaub_trips_clean_v1",
       "urlaub_trips_v7",
@@ -160,18 +157,12 @@ function loadTrips() {
   }
 }
 
-/* ---------------- Countries (NO API needed) ---------------- */
+/* ---------------- Countries (offline names) ---------------- */
 
-/**
- * Fix für "nur Buchstaben":
- * Wir bauen die Länder-Liste offline über Intl.DisplayNames.
- * => zeigt "Deutschland" statt "DE" selbst wenn RestCountries geblockt ist.
- */
 async function loadCountries() {
-  // Offline first
   try {
     if (Intl && typeof Intl.supportedValuesOf === "function") {
-      const regions = Intl.supportedValuesOf("region"); // ["DE","FR",...]
+      const regions = Intl.supportedValuesOf("region");
       const dn = new Intl.DisplayNames(["de"], { type: "region" });
 
       state.countries = regions
@@ -179,18 +170,12 @@ async function loadCountries() {
         .map((code) => ({
           cca2: code,
           name: dn.of(code) || code,
-          lat: null,
-          lon: null,
         }))
         .sort((a, b) => a.name.localeCompare(b.name, "de"));
-
       return;
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
 
-  // Fallback: minimal
   state.countries = [];
 }
 
@@ -216,7 +201,6 @@ function countryName(code) {
   const c = state.countries.find((x) => x.cca2 === code);
   if (c?.name) return c.name;
 
-  // Notfall: auch ohne Liste Namen versuchen
   try {
     const dn = new Intl.DisplayNames(["de"], { type: "region" });
     return dn.of(code) || code;
@@ -286,12 +270,15 @@ async function renderDetail() {
   const p = packProgress(t);
   $("dProgress").textContent = p.total ? `Packliste: ${p.done}/${p.total} erledigt` : "Packliste: —";
 
-  $("dClimate").textContent = "🌡 Klimamittel werden geladen…";
+  // NUR EIN WERT (Ø tagsüber)
+  $("dClimate").textContent = "🌡 Ø tagsüber wird geladen…";
   try {
-    const climate = await loadClimateAverage(t.countryCode, t.start || t.end, t.end || t.start);
-    $("dClimate").textContent = climate ? `🌡 Klimamittel: ${climate}` : "🌡 Klimamittel: —";
+    const avg = await loadDaytimeAvgMaxForTrip(t.countryCode, t.start, t.end);
+    $("dClimate").textContent = Number.isFinite(avg)
+      ? `🌡 Ø tagsüber: ${Math.round(avg)}°C`
+      : "🌡 Ø tagsüber: —";
   } catch {
-    $("dClimate").textContent = "🌡 Klimamittel: —";
+    $("dClimate").textContent = "🌡 Ø tagsüber: —";
   }
 }
 
@@ -608,11 +595,9 @@ function defaultPackItems(mode) {
 function suggestedPackTexts(countryCode, tripType, withDog, month, mode) {
   const out = [];
 
-  // Saison
   if (month != null && month >= 5 && month <= 9) out.push("Sonnencreme", "Sonnenbrille/Kappe");
   if (month != null && (month === 11 || month === 12 || month <= 3)) out.push("Warme Jacke / Layering", "Mütze/Handschuhe");
 
-  // Reiseart
   if (tripType === "beach") out.push("Badesachen", "Badelatschen", "After-Sun");
   if (tripType === "city") out.push("Bequeme Schuhe", "Tagesrucksack", "Powerbank");
   if (tripType === "hiking") out.push("Wanderschuhe", "Regenjacke", "Trinkflasche", "Blasenpflaster");
@@ -620,11 +605,9 @@ function suggestedPackTexts(countryCode, tripType, withDog, month, mode) {
   if (tripType === "roadtrip") out.push("Offline-Karten", "Kfz-Ladegerät", "Snacks/Wasser");
   if (tripType === "camping") out.push("Stirnlampe/Taschenlampe", "Mückenschutz", "Campingbesteck");
 
-  // Transport
   if (mode === "flight") out.push("Reise-Kopien (offline)", "Kopfhörer");
   if (mode === "car") out.push("Tanken/Ladestopps planen", "Kleingeld für Parken/Maut");
 
-  // Land (Adapter + Auto-Reminder)
   const cc = (countryCode || "").toUpperCase();
   if (["GB", "IE", "MT", "CY"].includes(cc)) out.push("Reiseadapter Typ G (UK)");
   if (["US", "CA", "MX"].includes(cc)) out.push("Reiseadapter Typ A/B (USA/Kanada)");
@@ -640,7 +623,6 @@ function suggestedPackTexts(countryCode, tripType, withDog, month, mode) {
 
   if (cc && !EU_LIKE.has(cc)) out.push("Einreisebestimmungen/Visa prüfen (Nicht-EU)");
 
-  // Hund
   if (withDog) {
     out.push(
       "EU-Heimtierausweis / Tierdokumente",
@@ -681,121 +663,108 @@ const EU_LIKE = new Set([
   "CZ","PL","SK","HU","SI","HR","RO","BG","LT","LV","EE","CY","MT"
 ]);
 
-/* ---------------- Climate (Daytime avg of daily max, last years) ---------------- */
-/**
- * Wunsch: nur tagsüber, nur ein Wert, Mittel der letzten Jahre.
- * => Wir nehmen "daily temperature_2m_max" aus der Historical Weather API (/v1/archive)
- * und bilden den Mittelwert über die letzten 10 vollständigen Jahre.
- */
-
-const climateDayCache = new Map(); // key -> number (°C)
+/* ---------------- Temperature: ONLY avg daytime (daily max) for the trip period ---------------- */
 
 /**
- * Gibt für einen Reisezeitraum eine kompakte Ausgabe zurück, z.B.
- * "Aug: Ø 29°C · Sep: Ø 25°C"
+ * Berechnet Ø der Tageshöchsttemperatur für den Zeitraum (Start-Ende),
+ * als Mittel über die letzten 10 vollen Jahre.
+ * Beispiel: Reise 10.08–20.08 => wir nehmen in jedem Jahr 10.08–20.08 temperature_2m_max
+ * und mitteln über alle Tage + Jahre.
  */
-async function loadClimateAverage(countryCode, startStr, endStr) {
-  if (!countryCode || !startStr) return "";
+async function loadDaytimeAvgMaxForTrip(countryCode, startStr, endStr) {
+  if (!countryCode || !startStr) return NaN;
 
   const coords = await getCoordsForCountry(countryCode);
-  if (!coords) return "";
-
-  const lat = coords.lat;
-  const lon = coords.lon;
+  if (!coords) return NaN;
 
   const start = new Date(startStr);
   const end = endStr ? new Date(endStr) : start;
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return "";
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return NaN;
 
-  // Monate im Zeitraum sammeln
-  const months = [];
-  const d = new Date(start.getFullYear(), start.getMonth(), 1);
-  const last = new Date(end.getFullYear(), end.getMonth(), 1);
-  while (d <= last) {
-    months.push({ y: d.getFullYear(), m: d.getMonth() + 1 });
-    d.setMonth(d.getMonth() + 1);
-  }
+  // Normalize order
+  const s = start <= end ? start : end;
+  const e = start <= end ? end : start;
 
-  // letzte 10 vollständige Jahre (z.B. heute 2026 => 2016–2025)
+  // Build cache key
+  const key = `${countryCode}|${coords.lat}|${coords.lon}|${toMD(s)}|${toMD(e)}|last10`;
+  if (avgCache.has(key)) return avgCache.get(key);
+
   const nowY = new Date().getFullYear();
   const endYear = nowY - 1;
   const startYear = endYear - 9;
-
-  const parts = [];
-  for (const mm of months) {
-    const avg = await dayAvgMaxMonth(lat, lon, mm.m, startYear, endYear);
-    if (Number.isFinite(avg)) {
-      parts.push(`${monthNameDE(mm.m)}: Ø ${Math.round(avg)}°C`);
-    }
-  }
-  return parts.join(" · ");
-}
-
-/**
- * Mittelwert der Tageshöchstwerte (temperature_2m_max) für einen Monat,
- * über einen Jahresbereich (z.B. 2016–2025)
- */
-async function dayAvgMaxMonth(lat, lon, month, startYear, endYear) {
-  const key = `${lat}|${lon}|m${month}|${startYear}-${endYear}`;
-  if (climateDayCache.has(key)) return climateDayCache.get(key);
 
   let sum = 0;
   let n = 0;
 
   for (let y = startYear; y <= endYear; y++) {
-    const res = await fetchHistoricalMonthMax(lat, lon, y, month);
-    if (!res || !res.length) continue;
+    const yearStart = buildDateYMD(y, s.getMonth() + 1, s.getDate());
+    const yearEnd = buildDateYMD(y, e.getMonth() + 1, e.getDate());
 
-    for (const v of res) {
-      if (Number.isFinite(v)) {
-        sum += v;
-        n += 1;
-      }
+    // Zeitraum über Jahreswechsel? (z.B. 28.12–05.01)
+    if (yearEnd < yearStart) {
+      // Teil 1: von yearStart bis 31.12
+      const a1 = await fetchDailyMax(coords.lat, coords.lon, yearStart, buildDateYMD(y, 12, 31));
+      // Teil 2: von 01.01 bis yearEnd (im Folgejahr)
+      const a2 = await fetchDailyMax(coords.lat, coords.lon, buildDateYMD(y + 1, 1, 1), yearEnd);
+      for (const v of [...a1, ...a2]) if (Number.isFinite(v)) { sum += v; n++; }
+    } else {
+      const arr = await fetchDailyMax(coords.lat, coords.lon, yearStart, yearEnd);
+      for (const v of arr) if (Number.isFinite(v)) { sum += v; n++; }
     }
   }
 
   const avg = n ? (sum / n) : NaN;
-  climateDayCache.set(key, avg);
+  avgCache.set(key, avg);
   return avg;
 }
 
-/**
- * Holt temperature_2m_max (tägliche Höchstwerte) für yyyy-mm
- * Historical Weather API: /v1/archive
- */
-async function fetchHistoricalMonthMax(lat, lon, year, month) {
-  const m2 = String(month).padStart(2, "0");
-  const start = `${year}-${m2}-01`;
-  const end = `${year}-${m2}-${String(daysInMonth(year, month)).padStart(2, "0")}`;
+async function fetchDailyMax(lat, lon, startDate, endDate) {
+  const s = toISODate(startDate);
+  const e = toISODate(endDate);
+  const key = `${lat}|${lon}|${s}|${e}|tmax`;
 
-  // pro Monat/Jahr cachen (damit nicht ständig neu geladen wird)
-  const key = `${lat}|${lon}|${start}|${end}`;
-  if (climateCache.has(key)) return climateCache.get(key);
+  if (histCache.has(key)) return histCache.get(key);
 
   const url =
     `https://archive-api.open-meteo.com/v1/archive?latitude=${encodeURIComponent(lat)}` +
     `&longitude=${encodeURIComponent(lon)}` +
-    `&start_date=${start}&end_date=${end}` +
-    `&daily=temperature_2m_max` +
-    `&timezone=auto`;
+    `&start_date=${s}&end_date=${e}` +
+    `&daily=temperature_2m_max&timezone=auto`;
 
   const res = await fetch(url);
   if (!res.ok) {
-    climateCache.set(key, null);
-    return null;
+    histCache.set(key, []);
+    return [];
   }
-
   const data = await res.json();
   const arr = (data?.daily?.temperature_2m_max || []).map(Number);
-
-  climateCache.set(key, arr);
+  histCache.set(key, arr);
   return arr;
 }
 
-function daysInMonth(year, month) {
-  return new Date(year, month, 0).getDate(); // month: 1-12
-}
+/* ---------------- Geocoding ---------------- */
 
+async function getCoordsForCountry(countryCode) {
+  if (geoCache.has(countryCode)) return geoCache.get(countryCode);
+
+  const name = countryName(countryCode);
+  if (!name) return null;
+
+  // countryCode filter hilft, damit "Croatia" nicht irgendwo anders landet
+  const url =
+    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}` +
+    `&count=1&language=de&format=json&countryCode=${encodeURIComponent(countryCode)}`;
+
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const data = await res.json();
+  const r = data?.results?.[0];
+  if (!r) return null;
+
+  const v = { lat: r.latitude, lon: r.longitude };
+  geoCache.set(countryCode, v);
+  return v;
+}
 
 /* ---------------- Utils ---------------- */
 
@@ -838,4 +807,21 @@ function escapeHtml(s) {
     '"': "&quot;",
     "'": "&#039;",
   })[m]);
+}
+
+function toISODate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const da = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${da}`;
+}
+
+function toMD(d) {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const da = String(d.getDate()).padStart(2, "0");
+  return `${m}-${da}`;
+}
+
+function buildDateYMD(year, month, day) {
+  return new Date(year, month - 1, day);
 }
