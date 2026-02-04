@@ -1,18 +1,18 @@
 const $ = (id) => document.getElementById(id);
-const STORAGE_KEY = "urlaub_trips_separate_v3";
+const STORAGE_KEY = "urlaub_trips_citytemp_v1";
 
 const state = {
   trips: loadTrips(),
   countries: [],
-  view: "list",          // list | detail | pack | info | edit
+  view: "list",
   navStack: ["list"],
   selectedId: null,
-  mode: "car",           // editor transport
+  mode: "car",
 };
 
-const geoCache = new Map();        // countryCode -> {lat,lon}
-const histCache = new Map();       // key -> array of daily max temps
-const avgCache = new Map();        // key -> avg number
+const geoCache = new Map();   // key -> {lat,lon,name}
+const histCache = new Map();  // key -> array of daily max temps
+const avgCache = new Map();   // key -> avg number
 
 init().catch((e) => {
   console.error(e);
@@ -97,7 +97,7 @@ function bindButtons() {
     openEditTrip(getTrip(state.selectedId));
   });
 
-  ["country", "start", "end", "tripType", "withDog"].forEach((id) => {
+  ["country", "start", "end", "tripType", "withDog", "city"].forEach((id) => {
     $(id).addEventListener("change", () => {
       if (state.view === "edit") updateAirlineVisibility();
     });
@@ -139,13 +139,12 @@ function loadTrips() {
     const v = localStorage.getItem(STORAGE_KEY);
     if (v) return JSON.parse(v);
 
+    // fallback ältere keys (falls du upgraden willst)
     const legacy = [
+      "urlaub_trips_citytemp_v0",
+      "urlaub_trips_separate_v3",
       "urlaub_trips_separate_v2",
       "urlaub_trips_separate_v1",
-      "urlaub_trips_clean_v1",
-      "urlaub_trips_v7",
-      "urlaub_trips_v6",
-      "urlaub_trips_v5",
     ];
     for (const k of legacy) {
       const x = localStorage.getItem(k);
@@ -167,15 +166,11 @@ async function loadCountries() {
 
       state.countries = regions
         .filter((code) => /^[A-Z]{2}$/.test(code))
-        .map((code) => ({
-          cca2: code,
-          name: dn.of(code) || code,
-        }))
+        .map((code) => ({ cca2: code, name: dn.of(code) || code }))
         .sort((a, b) => a.name.localeCompare(b.name, "de"));
       return;
     }
   } catch {}
-
   state.countries = [];
 }
 
@@ -200,7 +195,6 @@ function countryName(code) {
   if (!code) return "";
   const c = state.countries.find((x) => x.cca2 === code);
   if (c?.name) return c.name;
-
   try {
     const dn = new Intl.DisplayNames(["de"], { type: "region" });
     return dn.of(code) || code;
@@ -221,7 +215,7 @@ function renderList() {
   const q = ($("search").value || "").trim().toLowerCase();
   const sorted = [...state.trips].sort((a, b) => (a.start || "").localeCompare(b.start || ""));
   const filtered = q
-    ? sorted.filter((t) => `${t.title || ""} ${countryName(t.countryCode)}`.toLowerCase().includes(q))
+    ? sorted.filter((t) => `${t.title || ""} ${countryName(t.countryCode)} ${t.city || ""}`.toLowerCase().includes(q))
     : sorted;
 
   stats.textContent = filtered.length ? `${filtered.length} Reise(n)` : "";
@@ -235,6 +229,7 @@ function renderList() {
     const modePill = t.mode === "flight" ? "✈️ Flug" : "🚗 Auto";
     const type = tripTypeLabel(t.tripType);
     const dog = t.withDog ? "🐶" : "";
+    const city = (t.city || "").trim();
 
     const p = packProgress(t);
     const prog = p.total ? `${p.done}/${p.total} gepackt` : "";
@@ -242,7 +237,7 @@ function renderList() {
     el.innerHTML = `
       <div style="min-width:0">
         <div class="tripTitle">${escapeHtml(t.title || "Urlaub")}</div>
-        <div class="tripSub">${escapeHtml(countryName(t.countryCode))}${range ? " · " + escapeHtml(range) : ""}</div>
+        <div class="tripSub">${escapeHtml(countryName(t.countryCode))}${city ? " · " + escapeHtml(city) : ""}${range ? " · " + escapeHtml(range) : ""}</div>
         <div class="tripSub">${escapeHtml([type, dog, prog].filter(Boolean).join(" · "))}</div>
       </div>
       <div class="pill">${modePill}</div>
@@ -264,16 +259,18 @@ async function renderDetail() {
   if (!t) return showView("list");
 
   $("dTitle").textContent = t.title || "Urlaub";
+
   const range = [t.start, t.end].filter(Boolean).join(" – ");
-  $("dSub").textContent = `${countryName(t.countryCode)}${range ? " · " + range : ""}`;
+  const city = (t.city || "").trim();
+  $("dSub").textContent =
+    `${countryName(t.countryCode)}${city ? " · " + city : ""}${range ? " · " + range : ""}`;
 
   const p = packProgress(t);
   $("dProgress").textContent = p.total ? `Packliste: ${p.done}/${p.total} erledigt` : "Packliste: —";
 
-  // NUR EIN WERT (Ø tagsüber)
   $("dClimate").textContent = "🌡 Ø tagsüber wird geladen…";
   try {
-    const avg = await loadDaytimeAvgMaxForTrip(t.countryCode, t.start, t.end);
+    const avg = await loadDaytimeAvgMaxForTrip(t.countryCode, t.city, t.start, t.end);
     $("dClimate").textContent = Number.isFinite(avg)
       ? `🌡 Ø tagsüber: ${Math.round(avg)}°C`
       : "🌡 Ø tagsüber: —";
@@ -292,6 +289,7 @@ function openNewTrip() {
     id: null,
     title: "",
     countryCode: "",
+    city: "",
     start: "",
     end: "",
     tripType: "city",
@@ -318,6 +316,7 @@ function fillEditor(t) {
 
   $("title").value = t.title || "";
   $("country").value = t.countryCode || "";
+  $("city").value = t.city || "";
   $("start").value = t.start || "";
   $("end").value = t.end || "";
   $("tripType").value = t.tripType || "city";
@@ -344,6 +343,7 @@ function setMode(mode) {
 function saveTripFromEditor() {
   const title = ($("title").value || "").trim();
   const countryCode = $("country").value;
+  const city = ($("city").value || "").trim();
   const start = $("start").value;
   const end = $("end").value;
   const tripType = $("tripType").value;
@@ -365,6 +365,7 @@ function saveTripFromEditor() {
     ...base,
     title: title || "Urlaub",
     countryCode,
+    city,
     start,
     end,
     tripType,
@@ -497,7 +498,7 @@ function renderInfo() {
   if (!t) return showView("list");
 
   const blocks = [];
-  blocks.push(`<b>${escapeHtml(countryName(t.countryCode))}</b> · ${escapeHtml([t.start, t.end].filter(Boolean).join(" – "))}`);
+  blocks.push(`<b>${escapeHtml(countryName(t.countryCode))}${t.city ? " · " + escapeHtml(t.city) : ""}</b> · ${escapeHtml([t.start, t.end].filter(Boolean).join(" – "))}`);
 
   blocks.push(`<br><br><b>Allgemein</b><ul>
     <li>Dokumente prüfen (Gültigkeit, Kopien)</li>
@@ -663,35 +664,27 @@ const EU_LIKE = new Set([
   "CZ","PL","SK","HU","SI","HR","RO","BG","LT","LV","EE","CY","MT"
 ]);
 
-/* ---------------- Temperature: ONLY avg daytime (daily max) for the trip period ---------------- */
+/* ---------------- Temperature: city-based ONLY avg daytime (daily max) ---------------- */
 
-/**
- * Berechnet Ø der Tageshöchsttemperatur für den Zeitraum (Start-Ende),
- * als Mittel über die letzten 10 vollen Jahre.
- * Beispiel: Reise 10.08–20.08 => wir nehmen in jedem Jahr 10.08–20.08 temperature_2m_max
- * und mitteln über alle Tage + Jahre.
- */
-async function loadDaytimeAvgMaxForTrip(countryCode, startStr, endStr) {
+async function loadDaytimeAvgMaxForTrip(countryCode, city, startStr, endStr) {
   if (!countryCode || !startStr) return NaN;
-
-  const coords = await getCoordsForCountry(countryCode);
-  if (!coords) return NaN;
 
   const start = new Date(startStr);
   const end = endStr ? new Date(endStr) : start;
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return NaN;
 
-  // Normalize order
   const s = start <= end ? start : end;
   const e = start <= end ? end : start;
 
-  // Build cache key
-  const key = `${countryCode}|${coords.lat}|${coords.lon}|${toMD(s)}|${toMD(e)}|last10`;
-  if (avgCache.has(key)) return avgCache.get(key);
+  const coords = await getCoords(countryCode, city);
+  if (!coords) return NaN;
+
+  const cacheKey = `${coords.lat}|${coords.lon}|${toMD(s)}|${toMD(e)}|last10`;
+  if (avgCache.has(cacheKey)) return avgCache.get(cacheKey);
 
   const nowY = new Date().getFullYear();
-  const endYear = nowY - 1;
-  const startYear = endYear - 9;
+  const endYear = nowY - 1;      // letztes vollständiges Jahr
+  const startYear = endYear - 9; // 10 Jahre
 
   let sum = 0;
   let n = 0;
@@ -700,11 +693,9 @@ async function loadDaytimeAvgMaxForTrip(countryCode, startStr, endStr) {
     const yearStart = buildDateYMD(y, s.getMonth() + 1, s.getDate());
     const yearEnd = buildDateYMD(y, e.getMonth() + 1, e.getDate());
 
-    // Zeitraum über Jahreswechsel? (z.B. 28.12–05.01)
     if (yearEnd < yearStart) {
-      // Teil 1: von yearStart bis 31.12
+      // über Jahreswechsel
       const a1 = await fetchDailyMax(coords.lat, coords.lon, yearStart, buildDateYMD(y, 12, 31));
-      // Teil 2: von 01.01 bis yearEnd (im Folgejahr)
       const a2 = await fetchDailyMax(coords.lat, coords.lon, buildDateYMD(y + 1, 1, 1), yearEnd);
       for (const v of [...a1, ...a2]) if (Number.isFinite(v)) { sum += v; n++; }
     } else {
@@ -714,7 +705,7 @@ async function loadDaytimeAvgMaxForTrip(countryCode, startStr, endStr) {
   }
 
   const avg = n ? (sum / n) : NaN;
-  avgCache.set(key, avg);
+  avgCache.set(cacheKey, avg);
   return avg;
 }
 
@@ -722,7 +713,6 @@ async function fetchDailyMax(lat, lon, startDate, endDate) {
   const s = toISODate(startDate);
   const e = toISODate(endDate);
   const key = `${lat}|${lon}|${s}|${e}|tmax`;
-
   if (histCache.has(key)) return histCache.get(key);
 
   const url =
@@ -732,38 +722,56 @@ async function fetchDailyMax(lat, lon, startDate, endDate) {
     `&daily=temperature_2m_max&timezone=auto`;
 
   const res = await fetch(url);
-  if (!res.ok) {
-    histCache.set(key, []);
-    return [];
-  }
+  if (!res.ok) { histCache.set(key, []); return []; }
+
   const data = await res.json();
   const arr = (data?.daily?.temperature_2m_max || []).map(Number);
   histCache.set(key, arr);
   return arr;
 }
 
-/* ---------------- Geocoding ---------------- */
+/* ---------------- Geocoding: prefer city, fallback country ---------------- */
 
-async function getCoordsForCountry(countryCode) {
-  if (geoCache.has(countryCode)) return geoCache.get(countryCode);
+async function getCoords(countryCode, city) {
+  const cityClean = (city || "").trim();
+  const key = `${countryCode}|${cityClean.toLowerCase()}`;
+  if (geoCache.has(key)) return geoCache.get(key);
 
+  // 1) City within country
+  if (cityClean) {
+    const url =
+      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityClean)}` +
+      `&count=1&language=de&format=json&countryCode=${encodeURIComponent(countryCode)}`;
+
+    const res = await fetch(url);
+    if (res.ok) {
+      const data = await res.json();
+      const r = data?.results?.[0];
+      if (r) {
+        const v = { lat: r.latitude, lon: r.longitude, name: r.name };
+        geoCache.set(key, v);
+        return v;
+      }
+    }
+  }
+
+  // 2) Fallback: country as query
   const name = countryName(countryCode);
   if (!name) return null;
 
-  // countryCode filter hilft, damit "Croatia" nicht irgendwo anders landet
-  const url =
+  const url2 =
     `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}` +
     `&count=1&language=de&format=json&countryCode=${encodeURIComponent(countryCode)}`;
 
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  const data = await res.json();
-  const r = data?.results?.[0];
-  if (!r) return null;
+  const res2 = await fetch(url2);
+  if (!res2.ok) return null;
+  const data2 = await res2.json();
+  const r2 = data2?.results?.[0];
+  if (!r2) return null;
 
-  const v = { lat: r.latitude, lon: r.longitude };
-  geoCache.set(countryCode, v);
-  return v;
+  const v2 = { lat: r2.latitude, lon: r2.longitude, name: r2.name };
+  geoCache.set(key, v2);
+  return v2;
 }
 
 /* ---------------- Utils ---------------- */
