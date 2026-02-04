@@ -101,10 +101,13 @@
               <select id="country"></select>
             </label>
 
-            <label class="field full">
+            <!-- City + suggestions -->
+            <div class="field full cityWrap">
               <span>Stadt/Ort (für Temperatur)</span>
-              <input id="city" placeholder="z. B. Split, Dubrovnik, Zagreb" />
-            </label>
+              <input id="city" placeholder="Tippe z. B. 'Spl'…" autocomplete="off" />
+              <div id="citySuggest" class="suggest hidden"></div>
+              <div id="cityHint" class="tiny muted" style="margin-top:6px"></div>
+            </div>
 
             <label class="field">
               <span>Start</span>
@@ -161,7 +164,7 @@
           </div>
 
           <div class="muted tiny" style="margin-top:10px">
-            Temperatur wird anhand der Stadt berechnet (Ø Tageshöchstwerte, letzte 10 vollen Jahre).
+            Temperatur: Ø Tageshöchstwerte im Reisezeitraum (letzte 10 vollen Jahre), basierend auf Stadt/Ort.
           </div>
         </div>
       </section>
