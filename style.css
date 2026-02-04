@@ -1,158 +1,151 @@
-:root{
-  --bg:#0b1220;
-  --card:#111827;
-  --text:#e5e7eb;
-  --muted:#9ca3af;
-  --border:#243047;
-  --accent:#3b82f6;
-  --danger:#ef4444;
-  --radius:16px;
-  --max:520px;
-}
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Urlaubsplaner</title>
+  <link rel="stylesheet" href="style.css" />
+  <meta name="theme-color" content="#0b1220" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">UP</div>
+        <div>
+          <div class="title">Urlaubsplaner</div>
+          <div class="subtitle">Reisen · Packliste · Hinweise</div>
+        </div>
+      </div>
 
-*{box-sizing:border-box}
-html,body{height:100%}
-body{
-  margin:0;
-  font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
-  background: radial-gradient(1200px 800px at 20% -10%, #1f2937 0%, transparent 55%), var(--bg);
-  color:var(--text);
-}
+      <div class="top-actions">
+        <input id="search" class="search" placeholder="Suche (Titel/Land)..." />
+      </div>
+    </header>
 
-.app{max-width:var(--max); margin:0 auto; padding:18px}
-.top{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px}
-h1{font-size:20px; margin:0}
-h2{font-size:16px; margin:0 0 10px}
-h3{font-size:15px; margin:0 0 8px}
+    <main class="content">
+      <section class="card">
+        <div class="card-head">
+          <h2>Meine Reisen</h2>
+          <div id="stats" class="muted"></div>
+        </div>
 
-.card{
-  background:rgba(17,24,39,.92);
-  border:1px solid var(--border);
-  border-radius:var(--radius);
-  padding:14px;
-  margin-bottom:14px;
-  backdrop-filter: blur(8px);
-}
+        <div id="tripList" class="triplist"></div>
+        <div id="emptyTrips" class="empty muted">
+          Noch keine Reisen angelegt. Tippe unten rechts auf <strong>+</strong>.
+        </div>
+      </section>
+    </main>
 
-.list{display:flex; flex-direction:column; gap:10px}
-.item{
-  border:1px solid var(--border);
-  border-radius:14px;
-  padding:12px;
-  display:flex;
-  justify-content:space-between;
-  gap:12px;
-  cursor:pointer;
-}
-.item:hover{border-color:#3a4b6f}
-.item .meta{display:flex; flex-direction:column; gap:2px}
-.item .title{font-weight:700}
-.item .sub{color:var(--muted); font-size:13px; line-height: 1.25;}
+    <!-- Floating Add Button (mobil-sicher) -->
+    <button id="fabAdd" class="fab" type="button" aria-label="Neue Reise">+</button>
 
-.row{display:flex; align-items:center; gap:10px}
-.space{justify-content:space-between}
+    <!-- Editor Sheet -->
+    <section id="sheet" class="sheet hidden" aria-hidden="true">
+      <div class="sheet-backdrop" id="sheetClose"></div>
 
-.grid{
-  display:grid;
-  grid-template-columns: 1fr 1fr;
-  gap:12px;
-}
-label{display:flex; flex-direction:column; gap:6px; font-size:13px; color:var(--muted)}
-input,select,textarea{
-  width:100%;
-  padding:12px 12px;
-  border-radius:14px;
-  border:1px solid var(--border);
-  background:#0b1220;
-  color:var(--text);
-  outline:none;
-}
-textarea{grid-column:1 / -1; resize:vertical}
+      <div class="sheet-panel" role="dialog" aria-modal="true">
+        <div class="sheet-head">
+          <div>
+            <div id="sheetTitle" class="sheet-title">Neue Reise</div>
+            <div id="sheetSub" class="sheet-sub muted"></div>
+          </div>
+          <button id="btnClose" class="iconbtn" type="button" aria-label="Schließen">✕</button>
+        </div>
 
-.transport{grid-column:1 / -1}
-.transport .label{display:block; color:var(--muted); font-size:13px; margin-bottom:6px}
-.seg{display:flex; gap:10px}
-.segbtn{
-  flex:1;
-  padding:12px 10px;
-  border-radius:14px;
-  border:1px solid var(--border);
-  background:#0b1220;
-  color:var(--text);
-}
-.segbtn.active{border-color:var(--accent); box-shadow:0 0 0 3px rgba(59,130,246,.18)}
+        <div class="sheet-body">
+          <div class="grid">
+            <label class="field">
+              <span>Titel</span>
+              <input id="title" placeholder="z. B. Winterurlaub" />
+            </label>
 
-.primary,.ghost,.danger{
-  padding:12px 14px;
-  border-radius:14px;
-  border:1px solid var(--border);
-  background:#0b1220;
-  color:var(--text);
-}
-.primary{background:var(--accent); border-color:transparent; color:#081226; font-weight:800}
-.danger{background:var(--danger); border-color:transparent; color:#1b0a0a; font-weight:800}
-.ghost{background:transparent}
+            <label class="field">
+              <span>Land</span>
+              <select id="country"></select>
+            </label>
 
-.sep{border:none; border-top:1px solid var(--border); margin:14px 0}
-.muted{color:var(--muted)}
-.hidden{display:none !important}
+            <label class="field">
+              <span>Start</span>
+              <input id="start" type="date" />
+            </label>
 
-.advice{
-  border:1px solid var(--border);
-  border-radius:14px;
-  padding:12px;
-  background:#0b1220;
-}
-.advice ul{margin:8px 0 0 18px}
+            <label class="field">
+              <span>Ende</span>
+              <input id="end" type="date" />
+            </label>
 
-.pack { margin-top: 14px; }
-.packlist{ display:flex; flex-direction:column; gap:10px; margin-top:10px; }
+            <label class="field">
+              <span>Reiseart</span>
+              <select id="tripType">
+                <option value="city">Städtetrip</option>
+                <option value="beach">Strand</option>
+                <option value="hiking">Wandern/Natur</option>
+                <option value="ski">Ski/Winter</option>
+                <option value="roadtrip">Roadtrip</option>
+                <option value="camping">Camping</option>
+              </select>
+            </label>
 
-.packitem{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:10px;
-  padding:10px 12px;
-  border:1px solid var(--border);
-  border-radius:14px;
-  background:#0b1220;
-}
-.packleft{ display:flex; align-items:center; gap:10px; min-width:0; }
-.packleft input{ width:18px; height:18px; }
-.packtext{
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
-  color:var(--text);
-}
-.packtext.done{ text-decoration: line-through; color: var(--muted); }
+            <label class="field">
+              <span>Hund dabei?</span>
+              <select id="withDog">
+                <option value="no">Nein</option>
+                <option value="yes">Ja</option>
+              </select>
+            </label>
 
-.packdel{
-  border:1px solid var(--border);
-  background:transparent;
-  color:var(--muted);
-  border-radius:12px;
-  padding:8px 10px;
-}
-.packdel:hover{ border-color:#3a4b6f; color:var(--text); }
+            <div class="field full">
+              <span>Transport</span>
+              <div class="seg">
+                <button type="button" class="segbtn" data-mode="car">🚗 Auto</button>
+                <button type="button" class="segbtn" data-mode="flight">✈️ Flug</button>
+              </div>
+            </div>
 
-.packadd{ margin-top:10px; }
-.packadd input{ flex:1; }
-.small{ font-size:12px; }
+            <label id="airlineWrap" class="field full hidden">
+              <span>Airline (optional)</span>
+              <input id="airline" placeholder="z. B. Lufthansa" />
+            </label>
 
-.foot{font-size:12px; text-align:center; padding:6px 0 0}
+            <label class="field full">
+              <span>Notizen</span>
+              <textarea id="notes" rows="3" placeholder="Hotel, Route, ToDos..."></textarea>
+            </label>
+          </div>
 
-@media (max-width:520px){
-  .grid{grid-template-columns:1fr}
-}
-/* iOS Safari Fix: Klicks auf Header-Buttons erlauben */
-.top {
-  position: relative;
-  z-index: 10;
-}
+          <div class="card slim">
+            <h3>Hinweise & Klima</h3>
+            <div id="advice" class="advice muted">Wähle Land + Zeitraum.</div>
+          </div>
 
-.primary {
-  pointer-events: auto;
-}
+          <div class="card slim">
+            <div class="row space">
+              <h3>Packliste</h3>
+              <button id="btnResetPack" class="ghost" type="button">Standard</button>
+            </div>
 
+            <div id="packList" class="packlist"></div>
+
+            <div class="row packadd">
+              <input id="packNew" placeholder="Eigenes Item hinzufügen" />
+              <button id="btnAddPack" class="primary" type="button">+</button>
+            </div>
+
+            <div class="muted tiny">Tipp: Reiseart/Hund/Land ändern passt die Packliste automatisch an.</div>
+          </div>
+        </div>
+
+        <div class="sheet-foot">
+          <button id="btnDelete" class="danger hidden" type="button">Löschen</button>
+          <button id="btnSave" class="primary" type="button">Speichern</button>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer muted">Alles wird lokal gespeichert (LocalStorage).</footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
