@@ -681,8 +681,19 @@ const EU_LIKE = new Set([
   "CZ","PL","SK","HU","SI","HR","RO","BG","LT","LV","EE","CY","MT"
 ]);
 
-/* ---------------- Climate averages (with geocoding fallback) ---------------- */
+/* ---------------- Climate (Daytime avg of daily max, last years) ---------------- */
+/**
+ * Wunsch: nur tagsüber, nur ein Wert, Mittel der letzten Jahre.
+ * => Wir nehmen "daily temperature_2m_max" aus der Historical Weather API (/v1/archive)
+ * und bilden den Mittelwert über die letzten 10 vollständigen Jahre.
+ */
 
+const climateDayCache = new Map(); // key -> number (°C)
+
+/**
+ * Gibt für einen Reisezeitraum eine kompakte Ausgabe zurück, z.B.
+ * "Aug: Ø 29°C · Sep: Ø 25°C"
+ */
 async function loadClimateAverage(countryCode, startStr, endStr) {
   if (!countryCode || !startStr) return "";
 
@@ -696,6 +707,7 @@ async function loadClimateAverage(countryCode, startStr, endStr) {
   const end = endStr ? new Date(endStr) : start;
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return "";
 
+  // Monate im Zeitraum sammeln
   const months = [];
   const d = new Date(start.getFullYear(), start.getMonth(), 1);
   const last = new Date(end.getFullYear(), end.getMonth(), 1);
@@ -704,80 +716,86 @@ async function loadClimateAverage(countryCode, startStr, endStr) {
     d.setMonth(d.getMonth() + 1);
   }
 
+  // letzte 10 vollständige Jahre (z.B. heute 2026 => 2016–2025)
+  const nowY = new Date().getFullYear();
+  const endYear = nowY - 1;
+  const startYear = endYear - 9;
+
   const parts = [];
   for (const mm of months) {
-    const avg = await climateMonthAvg(lat, lon, mm.y, mm.m);
-    if (avg) parts.push(`${monthNameDE(mm.m)}: ${avg.min}–${avg.max}°C`);
+    const avg = await dayAvgMaxMonth(lat, lon, mm.m, startYear, endYear);
+    if (Number.isFinite(avg)) {
+      parts.push(`${monthNameDE(mm.m)}: Ø ${Math.round(avg)}°C`);
+    }
   }
   return parts.join(" · ");
 }
 
-async function getCoordsForCountry(countryCode) {
-  if (geoCache.has(countryCode)) return geoCache.get(countryCode);
+/**
+ * Mittelwert der Tageshöchstwerte (temperature_2m_max) für einen Monat,
+ * über einen Jahresbereich (z.B. 2016–2025)
+ */
+async function dayAvgMaxMonth(lat, lon, month, startYear, endYear) {
+  const key = `${lat}|${lon}|m${month}|${startYear}-${endYear}`;
+  if (climateDayCache.has(key)) return climateDayCache.get(key);
 
-  // wenn wir es in state.countries gecached hätten (z.B. später), nutzen
-  const c = state.countries.find((x) => x.cca2 === countryCode);
-  if (c && c.lat != null && c.lon != null) {
-    const v = { lat: c.lat, lon: c.lon };
-    geoCache.set(countryCode, v);
-    return v;
+  let sum = 0;
+  let n = 0;
+
+  for (let y = startYear; y <= endYear; y++) {
+    const res = await fetchHistoricalMonthMax(lat, lon, y, month);
+    if (!res || !res.length) continue;
+
+    for (const v of res) {
+      if (Number.isFinite(v)) {
+        sum += v;
+        n += 1;
+      }
+    }
   }
 
-  // Fallback: Open-Meteo Geocoding mit Ländernamen
-  const name = countryName(countryCode);
-  if (!name) return null;
-
-  const url =
-    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}` +
-    `&count=1&language=de&format=json`;
-
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  const data = await res.json();
-  const r = data?.results?.[0];
-  if (!r) return null;
-
-  const v = { lat: r.latitude, lon: r.longitude };
-  geoCache.set(countryCode, v);
-
-  // optional auch in state.countries merken
-  if (c) { c.lat = v.lat; c.lon = v.lon; }
-
-  return v;
+  const avg = n ? (sum / n) : NaN;
+  climateDayCache.set(key, avg);
+  return avg;
 }
 
-async function climateMonthAvg(lat, lon, year, month) {
-  const key = `${lat}|${lon}|${year}|${month}`;
+/**
+ * Holt temperature_2m_max (tägliche Höchstwerte) für yyyy-mm
+ * Historical Weather API: /v1/archive
+ */
+async function fetchHistoricalMonthMax(lat, lon, year, month) {
+  const m2 = String(month).padStart(2, "0");
+  const start = `${year}-${m2}-01`;
+  const end = `${year}-${m2}-${String(daysInMonth(year, month)).padStart(2, "0")}`;
+
+  // pro Monat/Jahr cachen (damit nicht ständig neu geladen wird)
+  const key = `${lat}|${lon}|${start}|${end}`;
   if (climateCache.has(key)) return climateCache.get(key);
 
-  const start = `${year}-${String(month).padStart(2, "0")}-01`;
-  const end = `${year}-${String(month).padStart(2, "0")}-${String(new Date(year, month, 0).getDate()).padStart(2, "0")}`;
-
   const url =
-    `https://climate-api.open-meteo.com/v1/climate?latitude=${encodeURIComponent(lat)}` +
+    `https://archive-api.open-meteo.com/v1/archive?latitude=${encodeURIComponent(lat)}` +
     `&longitude=${encodeURIComponent(lon)}` +
     `&start_date=${start}&end_date=${end}` +
-    `&models=MPI_ESM1_2_XR&daily=temperature_2m_min,temperature_2m_max&timezone=auto`;
+    `&daily=temperature_2m_max` +
+    `&timezone=auto`;
 
   const res = await fetch(url);
-  if (!res.ok) return null;
+  if (!res.ok) {
+    climateCache.set(key, null);
+    return null;
+  }
 
   const data = await res.json();
-  const mins = (data?.daily?.temperature_2m_min || []).map(Number).filter(Number.isFinite);
-  const maxs = (data?.daily?.temperature_2m_max || []).map(Number).filter(Number.isFinite);
-  if (!mins.length || !maxs.length) return null;
+  const arr = (data?.daily?.temperature_2m_max || []).map(Number);
 
-  const avgMin = Math.round(mins.reduce((a, b) => a + b, 0) / mins.length);
-  const avgMax = Math.round(maxs.reduce((a, b) => a + b, 0) / maxs.length);
-
-  const out = { min: avgMin, max: avgMax };
-  climateCache.set(key, out);
-  return out;
+  climateCache.set(key, arr);
+  return arr;
 }
 
-function monthNameDE(m) {
-  return ["Jan","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"][m - 1] || `M${m}`;
+function daysInMonth(year, month) {
+  return new Date(year, month, 0).getDate(); // month: 1-12
 }
+
 
 /* ---------------- Utils ---------------- */
 
