@@ -47,7 +47,7 @@ h3{font-size:15px; margin:0 0 8px}
 .item:hover{border-color:#3a4b6f}
 .item .meta{display:flex; flex-direction:column; gap:2px}
 .item .title{font-weight:700}
-.item .sub{color:var(--muted); font-size:13px}
+.item .sub{color:var(--muted); font-size:13px; line-height: 1.25;}
 
 .row{display:flex; align-items:center; gap:10px}
 .space{justify-content:space-between}
@@ -119,4 +119,30 @@ textarea{grid-column:1 / -1; resize:vertical}
   background:#0b1220;
 }
 .packleft{ display:flex; align-items:center; gap:10px; min-width:0; }
-.packleft input{ width:18px; height
+.packleft input{ width:18px; height:18px; }
+.packtext{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  color:var(--text);
+}
+.packtext.done{ text-decoration: line-through; color: var(--muted); }
+
+.packdel{
+  border:1px solid var(--border);
+  background:transparent;
+  color:var(--muted);
+  border-radius:12px;
+  padding:8px 10px;
+}
+.packdel:hover{ border-color:#3a4b6f; color:var(--text); }
+
+.packadd{ margin-top:10px; }
+.packadd input{ flex:1; }
+.small{ font-size:12px; }
+
+.foot{font-size:12px; text-align:center; padding:6px 0 0}
+
+@media (max-width:520px){
+  .grid{grid-template-columns:1fr}
+}
