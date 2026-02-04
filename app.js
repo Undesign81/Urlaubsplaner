@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const STORAGE_KEY = "urlaub_trips_citytemp_v2";
+const STORAGE_KEY = "urlaub_trips_citytemp_autocomplete_v1";
 
 const state = {
   trips: loadTrips(),
@@ -8,6 +8,8 @@ const state = {
   navStack: ["list"],
   selectedId: null,
   mode: "car",
+  cityPick: null,            // {name, lat, lon, admin1, country}
+  cityReqToken: 0,
 };
 
 const geoCache = new Map();   // key -> {lat,lon,name}
@@ -97,21 +99,16 @@ function bindButtons() {
     openEditTrip(getTrip(state.selectedId));
   });
 
-  ["country", "start", "end", "tripType", "withDog", "city"].forEach((id) => {
-    const el = $(id);
-    if (!el) return;
-    el.addEventListener("change", () => {
-      if (state.view === "edit") updateAirlineVisibility();
-    });
-  });
-
+  // Transport toggle
   document.querySelectorAll(".segbtn").forEach((btn) => {
     btn.addEventListener("click", () => setMode(btn.dataset.mode));
   });
 
+  // Editor actions
   $("btnSave").addEventListener("click", saveTripFromEditor);
   $("btnDelete").addEventListener("click", deleteCurrentTrip);
 
+  // Pack
   $("btnPackRefresh").addEventListener("click", () => {
     const t = getTrip(state.selectedId);
     if (!t) return;
@@ -124,6 +121,38 @@ function bindButtons() {
 
   $("btnAddPack").addEventListener("click", addCustomPackItem);
   $("packNew").addEventListener("keydown", (e) => e.key === "Enter" && addCustomPackItem());
+
+  // City autocomplete
+  const cityInput = $("city");
+  const suggestBox = $("citySuggest");
+
+  // hide suggestions on outside click
+  document.addEventListener("click", (e) => {
+    if (!suggestBox) return;
+    if (suggestBox.contains(e.target) || cityInput.contains(e.target)) return;
+    hideCitySuggest();
+  });
+
+  // Country change: clear city pick and refresh hint
+  $("country").addEventListener("change", () => {
+    state.cityPick = null;
+    $("city").value = "";
+    $("cityHint").textContent = "";
+    hideCitySuggest();
+  });
+
+  cityInput.addEventListener("input", debounce(async () => {
+    await onCityInput();
+  }, 220));
+
+  cityInput.addEventListener("focus", () => {
+    // if already typed, show again
+    if (($("city").value || "").trim().length >= 2) onCityInput();
+  });
+
+  cityInput.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") hideCitySuggest();
+  });
 }
 
 /* ---------------- Data helpers ---------------- */
@@ -142,8 +171,9 @@ function loadTrips() {
     if (v) return JSON.parse(v);
 
     const legacy = [
+      "urlaub_trips_citytemp_autocomplete_v0",
+      "urlaub_trips_citytemp_v2",
       "urlaub_trips_citytemp_v1",
-      "urlaub_trips_citytemp_v0",
       "urlaub_trips_separate_v3",
       "urlaub_trips_separate_v2",
       "urlaub_trips_separate_v1",
@@ -160,14 +190,8 @@ function loadTrips() {
 
 /* ---------------- Countries (robust) ---------------- */
 
-/**
- * Ziel: Dropdown MUSS immer Länder haben.
- * 1) Intl.supportedValuesOf("region") (offline)
- * 2) RestCountries (online)
- * 3) Fallback-Liste (offline, garantiert)
- */
 async function loadCountries() {
-  // 1) Offline via Intl.supportedValuesOf
+  // 1) Intl.supportedValuesOf (falls verfügbar)
   try {
     if (Intl && typeof Intl.supportedValuesOf === "function") {
       const regions = Intl.supportedValuesOf("region");
@@ -176,19 +200,17 @@ async function loadCountries() {
       const list = regions
         .filter((code) => /^[A-Z]{2}$/.test(code))
         .map((code) => ({ cca2: code, name: dn.of(code) || code }))
-        .filter((x) => x.name && x.name !== x.cca2) // schmeißt "ZZ" etc. raus
+        .filter((x) => x.name && x.name !== x.cca2)
         .sort((a, b) => a.name.localeCompare(b.name, "de"));
 
-      if (list.length >= 150) { // plausibel "fast alle Länder"
+      if (list.length >= 150) {
         state.countries = list;
         return;
       }
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
 
-  // 2) Online via RestCountries
+  // 2) RestCountries
   try {
     const res = await fetch("https://restcountries.com/v3.1/all?fields=name,cca2");
     if (res.ok) {
@@ -197,29 +219,24 @@ async function loadCountries() {
         .filter((x) => x?.cca2 && x?.name?.common)
         .map((x) => ({ cca2: x.cca2, name: x.name.common }))
         .sort((a, b) => a.name.localeCompare(b.name, "de"));
-
       if (list.length) {
         state.countries = list;
         return;
       }
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
 
-  // 3) Notfall: eingebaut (damit Auswahl immer geht)
+  // 3) Fallback (garantiert)
   state.countries = FALLBACK_COUNTRIES_DE.slice().sort((a, b) => a.name.localeCompare(b.name, "de"));
 }
 
 function fillCountrySelect() {
   const sel = $("country");
-  if (!sel) return;
-
   sel.innerHTML = "";
 
   const opt0 = document.createElement("option");
   opt0.value = "";
-  opt0.textContent = state.countries.length ? "Bitte wählen…" : "Keine Länder geladen";
+  opt0.textContent = "Bitte wählen…";
   sel.appendChild(opt0);
 
   for (const c of state.countries) {
@@ -234,7 +251,6 @@ function countryName(code) {
   if (!code) return "";
   const c = state.countries.find((x) => x.cca2 === code);
   if (c?.name) return c.name;
-
   try {
     const dn = new Intl.DisplayNames(["de"], { type: "region" });
     return dn.of(code) || code;
@@ -307,12 +323,18 @@ async function renderDetail() {
   const p = packProgress(t);
   $("dProgress").textContent = p.total ? `Packliste: ${p.done}/${p.total} erledigt` : "Packliste: —";
 
+  if (!t.start) {
+    $("dClimate").textContent = "🌡 Ø tagsüber: bitte Startdatum setzen";
+    return;
+  }
+
   $("dClimate").textContent = "🌡 Ø tagsüber wird geladen…";
   try {
-    const avg = await loadDaytimeAvgMaxForTrip(t.countryCode, t.city, t.start, t.end);
-    $("dClimate").textContent = Number.isFinite(avg) ? `🌡 Ø tagsüber: ${Math.round(avg)}°C` : "🌡 Ø tagsüber: —";
-  } catch {
-    $("dClimate").textContent = "🌡 Ø tagsüber: —";
+    const avg = await loadDaytimeAvgMaxForTrip(t, t.start, t.end || t.start);
+    $("dClimate").textContent = Number.isFinite(avg) ? `🌡 Ø tagsüber: ${Math.round(avg)}°C` : "🌡 Ø tagsüber: nicht gefunden";
+  } catch (e) {
+    console.error(e);
+    $("dClimate").textContent = "🌡 Ø tagsüber: Fehler beim Laden";
   }
 }
 
@@ -321,12 +343,16 @@ async function renderDetail() {
 function openNewTrip() {
   state.selectedId = null;
   state.mode = "car";
+  state.cityPick = null;
+  hideCitySuggest();
 
   fillEditor({
     id: null,
     title: "",
     countryCode: "",
     city: "",
+    cityLat: null,
+    cityLon: null,
     start: "",
     end: "",
     tripType: "city",
@@ -344,6 +370,8 @@ function openNewTrip() {
 function openEditTrip(t) {
   if (!t) return;
   state.mode = t.mode || "car";
+  state.cityPick = null;
+  hideCitySuggest();
   fillEditor(t);
   showView("edit");
 }
@@ -360,6 +388,8 @@ function fillEditor(t) {
   $("withDog").value = t.withDog ? "yes" : "no";
   $("notes").value = t.notes || "";
   $("airline").value = t.airline || "";
+
+  $("cityHint").textContent = t.cityLat && t.cityLon ? `Gespeichert: ${Math.round(t.cityLat*100)/100}, ${Math.round(t.cityLon*100)/100}` : "";
 
   setMode(state.mode);
   updateAirlineVisibility();
@@ -396,11 +426,16 @@ function saveTripFromEditor() {
     packItems: defaultPackItems(state.mode),
   };
 
+  // Wenn Stadt manuell geändert wurde, aber kein Pick erfolgt: Koordinaten löschen -> neu suchen beim Anzeigen
+  const picked = state.cityPick && state.cityPick.name && city && normKey(state.cityPick.name) === normKey(city);
+
   const updated = {
     ...base,
     title: title || "Urlaub",
     countryCode,
     city,
+    cityLat: picked ? state.cityPick.lat : (existing?.city === city ? existing?.cityLat : null),
+    cityLon: picked ? state.cityPick.lon : (existing?.city === city ? existing?.cityLon : null),
     start,
     end,
     tripType,
@@ -437,6 +472,102 @@ function deleteCurrentTrip() {
   state.selectedId = null;
   renderList();
   showView("list");
+}
+
+/* ---------------- City autocomplete ---------------- */
+
+async function onCityInput() {
+  const countryCode = $("country").value;
+  const q = ($("city").value || "").trim();
+
+  state.cityPick = null;
+  $("cityHint").textContent = "";
+
+  if (!countryCode) {
+    showCitySuggestEmpty("Bitte zuerst ein Land auswählen.");
+    return;
+  }
+
+  if (q.length < 2) {
+    hideCitySuggest();
+    return;
+  }
+
+  const token = ++state.cityReqToken;
+  showCitySuggestEmpty("Suche…");
+
+  try {
+    const results = await geocodeCitySuggestions(q, countryCode, 6);
+    if (token !== state.cityReqToken) return; // outdated request
+
+    if (!results.length) {
+      showCitySuggestEmpty("Keine Treffer. Tipp: sieh nach Schreibweise (z. B. 'Split').");
+      return;
+    }
+
+    renderCitySuggest(results);
+  } catch (e) {
+    console.error(e);
+    showCitySuggestEmpty("Fehler beim Laden der Vorschläge.");
+  }
+}
+
+async function geocodeCitySuggestions(query, countryCode, limit = 6) {
+  const url =
+    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}` +
+    `&count=${limit}&language=de&format=json&countryCode=${encodeURIComponent(countryCode)}`;
+
+  const res = await fetch(url);
+  if (!res.ok) return [];
+  const data = await res.json();
+  const arr = Array.isArray(data?.results) ? data.results : [];
+
+  // Sort: prefer higher population if exists, else keep
+  arr.sort((a, b) => (b.population || 0) - (a.population || 0));
+
+  return arr.map((r) => ({
+    name: r.name,
+    admin1: r.admin1 || "",
+    country: r.country || "",
+    lat: r.latitude,
+    lon: r.longitude,
+  }));
+}
+
+function renderCitySuggest(items) {
+  const box = $("citySuggest");
+  box.innerHTML = "";
+
+  for (const it of items) {
+    const row = document.createElement("div");
+    row.className = "suggestItem";
+    row.innerHTML = `
+      <span>${escapeHtml(it.name)}</span>
+      <span class="mutedLine">${escapeHtml([it.admin1, it.country].filter(Boolean).join(" · "))}</span>
+    `;
+    row.addEventListener("click", () => {
+      $("city").value = it.name;
+      state.cityPick = it; // store coords for save
+      $("cityHint").textContent = `Ausgewählt: ${it.name} (${Math.round(it.lat*100)/100}, ${Math.round(it.lon*100)/100})`;
+      hideCitySuggest();
+    });
+    box.appendChild(row);
+  }
+
+  box.classList.remove("hidden");
+}
+
+function showCitySuggestEmpty(text) {
+  const box = $("citySuggest");
+  box.innerHTML = `<div class="suggestEmpty">${escapeHtml(text)}</div>`;
+  box.classList.remove("hidden");
+}
+
+function hideCitySuggest() {
+  const box = $("citySuggest");
+  if (!box) return;
+  box.classList.add("hidden");
+  box.innerHTML = "";
 }
 
 /* ---------------- PACK VIEW ---------------- */
@@ -533,11 +664,7 @@ function renderInfo() {
   if (!t) return showView("list");
 
   const blocks = [];
-  blocks.push(
-    `<b>${escapeHtml(countryName(t.countryCode))}${t.city ? " · " + escapeHtml(t.city) : ""}</b> · ${escapeHtml(
-      [t.start, t.end].filter(Boolean).join(" – ")
-    )}`
-  );
+  blocks.push(`<b>${escapeHtml(countryName(t.countryCode))}${t.city ? " · " + escapeHtml(t.city) : ""}</b> · ${escapeHtml([t.start, t.end].filter(Boolean).join(" – "))}`);
 
   blocks.push(`<br><br><b>Allgemein</b><ul>
     <li>Dokumente prüfen (Gültigkeit, Kopien)</li>
@@ -583,9 +710,8 @@ function recalcPackItemsForTrip(t) {
   const base = defaultPackItems(t.mode || "car");
   const month = (t.start || t.end) ? safeMonth(t.start || t.end) : null;
 
-  const suggTexts = suggestedPackTexts(t.countryCode, t.tripType, t.withDog, month, t.mode || "car").filter(
-    (txt) => !removed.has(normKey(txt))
-  );
+  const suggTexts = suggestedPackTexts(t.countryCode, t.tripType, t.withDog, month, t.mode || "car")
+    .filter((txt) => !removed.has(normKey(txt)));
 
   const merged = [];
   const seen = new Set();
@@ -617,8 +743,18 @@ function defaultPackItems(mode) {
     "Handy + Ladekabel/Powerbank",
     "Medikamente / Reiseapotheke",
   ];
-  const car = ["Führerschein + Fahrzeugschein", "Warnweste + Warndreieck", "Maut/Vignette (falls nötig)", "Navigation/Offline-Karten"];
-  const flight = ["Buchungsbestätigung/Boarding", "Handgepäck-Regeln prüfen", "Koffergewicht/Größe prüfen", "Flüssigkeiten (100ml) Beutel"];
+  const car = [
+    "Führerschein + Fahrzeugschein",
+    "Warnweste + Warndreieck",
+    "Maut/Vignette (falls nötig)",
+    "Navigation/Offline-Karten",
+  ];
+  const flight = [
+    "Buchungsbestätigung/Boarding",
+    "Handgepäck-Regeln prüfen",
+    "Koffergewicht/Größe prüfen",
+    "Flüssigkeiten (100ml) Beutel",
+  ];
   const merged = mode === "flight" ? general.concat(flight) : general.concat(car);
   return merged.map((text) => ({ id: crypto.randomUUID(), text, done: false, custom: false }));
 }
@@ -694,11 +830,9 @@ const EU_LIKE = new Set([
   "CZ","PL","SK","HU","SI","HR","RO","BG","LT","LV","EE","CY","MT"
 ]);
 
-/* ---------------- Temperature: city-based ONLY avg daytime (daily max) ---------------- */
+/* ---------------- Temperature: ONLY avg daytime (daily max) ---------------- */
 
-async function loadDaytimeAvgMaxForTrip(countryCode, city, startStr, endStr) {
-  if (!countryCode || !startStr) return NaN;
-
+async function loadDaytimeAvgMaxForTrip(trip, startStr, endStr) {
   const start = new Date(startStr);
   const end = endStr ? new Date(endStr) : start;
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return NaN;
@@ -706,7 +840,13 @@ async function loadDaytimeAvgMaxForTrip(countryCode, city, startStr, endStr) {
   const s = start <= end ? start : end;
   const e = start <= end ? end : start;
 
-  const coords = await getCoords(countryCode, city);
+  // coords: prefer stored city coords, else geocode
+  let coords = null;
+  if (Number.isFinite(trip.cityLat) && Number.isFinite(trip.cityLon)) {
+    coords = { lat: trip.cityLat, lon: trip.cityLon };
+  } else {
+    coords = await getCoordsFromCityOrCountry(trip.countryCode, trip.city);
+  }
   if (!coords) return NaN;
 
   const cacheKey = `${coords.lat}|${coords.lon}|${toMD(s)}|${toMD(e)}|last10`;
@@ -759,46 +899,34 @@ async function fetchDailyMax(lat, lon, startDate, endDate) {
   return arr;
 }
 
-/* ---------------- Geocoding: prefer city, fallback country ---------------- */
-
-async function getCoords(countryCode, city) {
+async function getCoordsFromCityOrCountry(countryCode, city) {
   const cityClean = (city || "").trim();
-  const key = `${countryCode}|${cityClean.toLowerCase()}`;
-  if (geoCache.has(key)) return geoCache.get(key);
-
   if (cityClean) {
-    const url =
-      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityClean)}` +
-      `&count=1&language=de&format=json&countryCode=${encodeURIComponent(countryCode)}`;
-
-    const res = await fetch(url);
-    if (res.ok) {
-      const data = await res.json();
-      const r = data?.results?.[0];
-      if (r) {
-        const v = { lat: r.latitude, lon: r.longitude, name: r.name };
-        geoCache.set(key, v);
-        return v;
-      }
-    }
+    // try with country filter
+    let r = await geocodeOne(cityClean, countryCode, true);
+    // fallback without filter
+    if (!r) r = await geocodeOne(cityClean, countryCode, false);
+    if (r) return { lat: r.latitude, lon: r.longitude };
   }
-
+  // fallback country
   const name = countryName(countryCode);
   if (!name) return null;
-
-  const url2 =
-    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}` +
-    `&count=1&language=de&format=json&countryCode=${encodeURIComponent(countryCode)}`;
-
-  const res2 = await fetch(url2);
-  if (!res2.ok) return null;
-  const data2 = await res2.json();
-  const r2 = data2?.results?.[0];
+  let r2 = await geocodeOne(name, countryCode, true);
+  if (!r2) r2 = await geocodeOne(name, countryCode, false);
   if (!r2) return null;
+  return { lat: r2.latitude, lon: r2.longitude };
+}
 
-  const v2 = { lat: r2.latitude, lon: r2.longitude, name: r2.name };
-  geoCache.set(key, v2);
-  return v2;
+async function geocodeOne(name, countryCode, withFilter) {
+  const url =
+    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}` +
+    `&count=1&language=de&format=json` +
+    (withFilter ? `&countryCode=${encodeURIComponent(countryCode)}` : "");
+
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data?.results?.[0] || null;
 }
 
 /* ---------------- Utils ---------------- */
@@ -861,8 +989,15 @@ function buildDateYMD(year, month, day) {
   return new Date(year, month - 1, day);
 }
 
-/* ---------------- Fallback Countries (DE names) ---------------- */
-/* Damit das Dropdown garantiert funktioniert, selbst ohne Intl + ohne RestCountries. */
+function debounce(fn, ms) {
+  let t = null;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  };
+}
+
+/* ---------------- Fallback Countries (DE) ---------------- */
 const FALLBACK_COUNTRIES_DE = [
   { cca2: "DE", name: "Deutschland" },
   { cca2: "AT", name: "Österreich" },
