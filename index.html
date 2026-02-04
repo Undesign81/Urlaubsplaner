@@ -27,10 +27,37 @@
       </div>
 
       <div class="grid">
-        <label>Titel <input id="title" placeholder="z. B. Sommerurlaub" /></label>
-        <label>Land <select id="country"></select></label>
-        <label>Start <input id="start" type="date" /></label>
-        <label>Ende <input id="end" type="date" /></label>
+        <label>
+          Titel
+          <input id="title" placeholder="z. B. Sommerurlaub" />
+        </label>
+
+        <label>
+          Land
+          <select id="country"></select>
+        </label>
+
+        <label>
+          Start
+          <input id="start" type="date" />
+        </label>
+
+        <label>
+          Ende
+          <input id="end" type="date" />
+        </label>
+
+        <label>
+          Reiseart
+          <select id="tripType">
+            <option value="city">Städtetrip</option>
+            <option value="beach">Strand</option>
+            <option value="hiking">Wandern/Natur</option>
+            <option value="ski">Ski/Winter</option>
+            <option value="roadtrip">Roadtrip</option>
+            <option value="camping">Camping</option>
+          </select>
+        </label>
 
         <div class="transport">
           <span class="label">Transport</span>
@@ -47,7 +74,7 @@
 
         <label>
           Notizen
-          <textarea id="notes" rows="3"></textarea>
+          <textarea id="notes" rows="3" placeholder="Hotel, Route, ToDos..."></textarea>
         </label>
       </div>
 
@@ -60,25 +87,31 @@
 
       <section>
         <h3>Das musst du beachten</h3>
-        <div id="advice" class="advice"></div>
+        <div id="advice" class="advice">
+          <p class="muted">Wähle Land + Zeitraum, dann lädt die App Hinweise.</p>
+        </div>
       </section>
 
       <section class="pack">
         <div class="row space">
-          <h3>Packliste</h3>
+          <h3>Packliste (mit Checkboxen)</h3>
           <button id="btnResetPack" class="ghost" type="button">Standard laden</button>
         </div>
 
         <div id="packList" class="packlist"></div>
 
         <div class="row packadd">
-          <input id="packNew" placeholder="Eigenes Item hinzufügen" />
+          <input id="packNew" placeholder="Eigenes Item hinzufügen (z.B. Schnorchel)" />
           <button id="btnAddPack" class="primary" type="button">Hinzufügen</button>
         </div>
+
+        <p class="muted small">Packliste ist pro Reise gespeichert.</p>
       </section>
     </section>
 
-    <footer class="foot muted">Daten lokal gespeichert.</footer>
+    <footer class="foot muted">
+      Daten lokal auf deinem Gerät gespeichert.
+    </footer>
   </main>
 
   <script src="app.js"></script>
