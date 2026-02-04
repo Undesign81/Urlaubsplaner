@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const STORAGE_KEY = "urlaub_trips_citytemp_v1";
+const STORAGE_KEY = "urlaub_trips_citytemp_v2";
 
 const state = {
   trips: loadTrips(),
@@ -98,7 +98,9 @@ function bindButtons() {
   });
 
   ["country", "start", "end", "tripType", "withDog", "city"].forEach((id) => {
-    $(id).addEventListener("change", () => {
+    const el = $(id);
+    if (!el) return;
+    el.addEventListener("change", () => {
       if (state.view === "edit") updateAirlineVisibility();
     });
   });
@@ -139,8 +141,8 @@ function loadTrips() {
     const v = localStorage.getItem(STORAGE_KEY);
     if (v) return JSON.parse(v);
 
-    // fallback ältere keys (falls du upgraden willst)
     const legacy = [
+      "urlaub_trips_citytemp_v1",
       "urlaub_trips_citytemp_v0",
       "urlaub_trips_separate_v3",
       "urlaub_trips_separate_v2",
@@ -156,31 +158,68 @@ function loadTrips() {
   }
 }
 
-/* ---------------- Countries (offline names) ---------------- */
+/* ---------------- Countries (robust) ---------------- */
 
+/**
+ * Ziel: Dropdown MUSS immer Länder haben.
+ * 1) Intl.supportedValuesOf("region") (offline)
+ * 2) RestCountries (online)
+ * 3) Fallback-Liste (offline, garantiert)
+ */
 async function loadCountries() {
+  // 1) Offline via Intl.supportedValuesOf
   try {
     if (Intl && typeof Intl.supportedValuesOf === "function") {
       const regions = Intl.supportedValuesOf("region");
       const dn = new Intl.DisplayNames(["de"], { type: "region" });
 
-      state.countries = regions
+      const list = regions
         .filter((code) => /^[A-Z]{2}$/.test(code))
         .map((code) => ({ cca2: code, name: dn.of(code) || code }))
+        .filter((x) => x.name && x.name !== x.cca2) // schmeißt "ZZ" etc. raus
         .sort((a, b) => a.name.localeCompare(b.name, "de"));
-      return;
+
+      if (list.length >= 150) { // plausibel "fast alle Länder"
+        state.countries = list;
+        return;
+      }
     }
-  } catch {}
-  state.countries = [];
+  } catch {
+    // ignore
+  }
+
+  // 2) Online via RestCountries
+  try {
+    const res = await fetch("https://restcountries.com/v3.1/all?fields=name,cca2");
+    if (res.ok) {
+      const data = await res.json();
+      const list = (Array.isArray(data) ? data : [])
+        .filter((x) => x?.cca2 && x?.name?.common)
+        .map((x) => ({ cca2: x.cca2, name: x.name.common }))
+        .sort((a, b) => a.name.localeCompare(b.name, "de"));
+
+      if (list.length) {
+        state.countries = list;
+        return;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // 3) Notfall: eingebaut (damit Auswahl immer geht)
+  state.countries = FALLBACK_COUNTRIES_DE.slice().sort((a, b) => a.name.localeCompare(b.name, "de"));
 }
 
 function fillCountrySelect() {
   const sel = $("country");
+  if (!sel) return;
+
   sel.innerHTML = "";
 
   const opt0 = document.createElement("option");
   opt0.value = "";
-  opt0.textContent = "Bitte wählen…";
+  opt0.textContent = state.countries.length ? "Bitte wählen…" : "Keine Länder geladen";
   sel.appendChild(opt0);
 
   for (const c of state.countries) {
@@ -195,6 +234,7 @@ function countryName(code) {
   if (!code) return "";
   const c = state.countries.find((x) => x.cca2 === code);
   if (c?.name) return c.name;
+
   try {
     const dn = new Intl.DisplayNames(["de"], { type: "region" });
     return dn.of(code) || code;
@@ -262,8 +302,7 @@ async function renderDetail() {
 
   const range = [t.start, t.end].filter(Boolean).join(" – ");
   const city = (t.city || "").trim();
-  $("dSub").textContent =
-    `${countryName(t.countryCode)}${city ? " · " + city : ""}${range ? " · " + range : ""}`;
+  $("dSub").textContent = `${countryName(t.countryCode)}${city ? " · " + city : ""}${range ? " · " + range : ""}`;
 
   const p = packProgress(t);
   $("dProgress").textContent = p.total ? `Packliste: ${p.done}/${p.total} erledigt` : "Packliste: —";
@@ -271,9 +310,7 @@ async function renderDetail() {
   $("dClimate").textContent = "🌡 Ø tagsüber wird geladen…";
   try {
     const avg = await loadDaytimeAvgMaxForTrip(t.countryCode, t.city, t.start, t.end);
-    $("dClimate").textContent = Number.isFinite(avg)
-      ? `🌡 Ø tagsüber: ${Math.round(avg)}°C`
-      : "🌡 Ø tagsüber: —";
+    $("dClimate").textContent = Number.isFinite(avg) ? `🌡 Ø tagsüber: ${Math.round(avg)}°C` : "🌡 Ø tagsüber: —";
   } catch {
     $("dClimate").textContent = "🌡 Ø tagsüber: —";
   }
@@ -334,9 +371,7 @@ function updateAirlineVisibility() {
 
 function setMode(mode) {
   state.mode = mode === "flight" ? "flight" : "car";
-  document.querySelectorAll(".segbtn").forEach((b) => {
-    b.classList.toggle("active", b.dataset.mode === state.mode);
-  });
+  document.querySelectorAll(".segbtn").forEach((b) => b.classList.toggle("active", b.dataset.mode === state.mode));
   updateAirlineVisibility();
 }
 
@@ -498,7 +533,11 @@ function renderInfo() {
   if (!t) return showView("list");
 
   const blocks = [];
-  blocks.push(`<b>${escapeHtml(countryName(t.countryCode))}${t.city ? " · " + escapeHtml(t.city) : ""}</b> · ${escapeHtml([t.start, t.end].filter(Boolean).join(" – "))}`);
+  blocks.push(
+    `<b>${escapeHtml(countryName(t.countryCode))}${t.city ? " · " + escapeHtml(t.city) : ""}</b> · ${escapeHtml(
+      [t.start, t.end].filter(Boolean).join(" – ")
+    )}`
+  );
 
   blocks.push(`<br><br><b>Allgemein</b><ul>
     <li>Dokumente prüfen (Gültigkeit, Kopien)</li>
@@ -544,8 +583,9 @@ function recalcPackItemsForTrip(t) {
   const base = defaultPackItems(t.mode || "car");
   const month = (t.start || t.end) ? safeMonth(t.start || t.end) : null;
 
-  const suggTexts = suggestedPackTexts(t.countryCode, t.tripType, t.withDog, month, t.mode || "car")
-    .filter((txt) => !removed.has(normKey(txt)));
+  const suggTexts = suggestedPackTexts(t.countryCode, t.tripType, t.withDog, month, t.mode || "car").filter(
+    (txt) => !removed.has(normKey(txt))
+  );
 
   const merged = [];
   const seen = new Set();
@@ -577,18 +617,8 @@ function defaultPackItems(mode) {
     "Handy + Ladekabel/Powerbank",
     "Medikamente / Reiseapotheke",
   ];
-  const car = [
-    "Führerschein + Fahrzeugschein",
-    "Warnweste + Warndreieck",
-    "Maut/Vignette (falls nötig)",
-    "Navigation/Offline-Karten",
-  ];
-  const flight = [
-    "Buchungsbestätigung/Boarding",
-    "Handgepäck-Regeln prüfen",
-    "Koffergewicht/Größe prüfen",
-    "Flüssigkeiten (100ml) Beutel",
-  ];
+  const car = ["Führerschein + Fahrzeugschein", "Warnweste + Warndreieck", "Maut/Vignette (falls nötig)", "Navigation/Offline-Karten"];
+  const flight = ["Buchungsbestätigung/Boarding", "Handgepäck-Regeln prüfen", "Koffergewicht/Größe prüfen", "Flüssigkeiten (100ml) Beutel"];
   const merged = mode === "flight" ? general.concat(flight) : general.concat(car);
   return merged.map((text) => ({ id: crypto.randomUUID(), text, done: false, custom: false }));
 }
@@ -683,8 +713,8 @@ async function loadDaytimeAvgMaxForTrip(countryCode, city, startStr, endStr) {
   if (avgCache.has(cacheKey)) return avgCache.get(cacheKey);
 
   const nowY = new Date().getFullYear();
-  const endYear = nowY - 1;      // letztes vollständiges Jahr
-  const startYear = endYear - 9; // 10 Jahre
+  const endYear = nowY - 1;
+  const startYear = endYear - 9;
 
   let sum = 0;
   let n = 0;
@@ -694,7 +724,6 @@ async function loadDaytimeAvgMaxForTrip(countryCode, city, startStr, endStr) {
     const yearEnd = buildDateYMD(y, e.getMonth() + 1, e.getDate());
 
     if (yearEnd < yearStart) {
-      // über Jahreswechsel
       const a1 = await fetchDailyMax(coords.lat, coords.lon, yearStart, buildDateYMD(y, 12, 31));
       const a2 = await fetchDailyMax(coords.lat, coords.lon, buildDateYMD(y + 1, 1, 1), yearEnd);
       for (const v of [...a1, ...a2]) if (Number.isFinite(v)) { sum += v; n++; }
@@ -737,7 +766,6 @@ async function getCoords(countryCode, city) {
   const key = `${countryCode}|${cityClean.toLowerCase()}`;
   if (geoCache.has(key)) return geoCache.get(key);
 
-  // 1) City within country
   if (cityClean) {
     const url =
       `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityClean)}` +
@@ -755,7 +783,6 @@ async function getCoords(countryCode, city) {
     }
   }
 
-  // 2) Fallback: country as query
   const name = countryName(countryCode);
   if (!name) return null;
 
@@ -833,3 +860,41 @@ function toMD(d) {
 function buildDateYMD(year, month, day) {
   return new Date(year, month - 1, day);
 }
+
+/* ---------------- Fallback Countries (DE names) ---------------- */
+/* Damit das Dropdown garantiert funktioniert, selbst ohne Intl + ohne RestCountries. */
+const FALLBACK_COUNTRIES_DE = [
+  { cca2: "DE", name: "Deutschland" },
+  { cca2: "AT", name: "Österreich" },
+  { cca2: "CH", name: "Schweiz" },
+  { cca2: "HR", name: "Kroatien" },
+  { cca2: "IT", name: "Italien" },
+  { cca2: "ES", name: "Spanien" },
+  { cca2: "FR", name: "Frankreich" },
+  { cca2: "GR", name: "Griechenland" },
+  { cca2: "PT", name: "Portugal" },
+  { cca2: "NL", name: "Niederlande" },
+  { cca2: "BE", name: "Belgien" },
+  { cca2: "DK", name: "Dänemark" },
+  { cca2: "SE", name: "Schweden" },
+  { cca2: "NO", name: "Norwegen" },
+  { cca2: "FI", name: "Finnland" },
+  { cca2: "PL", name: "Polen" },
+  { cca2: "CZ", name: "Tschechien" },
+  { cca2: "HU", name: "Ungarn" },
+  { cca2: "SI", name: "Slowenien" },
+  { cca2: "SK", name: "Slowakei" },
+  { cca2: "RO", name: "Rumänien" },
+  { cca2: "BG", name: "Bulgarien" },
+  { cca2: "TR", name: "Türkei" },
+  { cca2: "GB", name: "Vereinigtes Königreich" },
+  { cca2: "IE", name: "Irland" },
+  { cca2: "US", name: "USA" },
+  { cca2: "CA", name: "Kanada" },
+  { cca2: "MX", name: "Mexiko" },
+  { cca2: "AE", name: "Vereinigte Arabische Emirate" },
+  { cca2: "TH", name: "Thailand" },
+  { cca2: "JP", name: "Japan" },
+  { cca2: "AU", name: "Australien" },
+  { cca2: "NZ", name: "Neuseeland" },
+];
