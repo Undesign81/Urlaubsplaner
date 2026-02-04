@@ -1,151 +1,243 @@
-<!doctype html>
-<html lang="de">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>Urlaubsplaner</title>
-  <link rel="stylesheet" href="style.css" />
-  <meta name="theme-color" content="#0b1220" />
-</head>
-<body>
-  <div class="app">
-    <header class="topbar">
-      <div class="brand">
-        <div class="logo">UP</div>
-        <div>
-          <div class="title">Urlaubsplaner</div>
-          <div class="subtitle">Reisen · Packliste · Hinweise</div>
-        </div>
-      </div>
+:root{
+  --bg:#0b1220;
+  --card:#101a2d;
+  --text:#e5e7eb;
+  --muted:#a0aec0;
+  --border:#223250;
+  --accent:#3b82f6;
+  --danger:#ef4444;
+  --radius:16px;
+}
 
-      <div class="top-actions">
-        <input id="search" class="search" placeholder="Suche (Titel/Land)..." />
-      </div>
-    </header>
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-tap-highlight-color: transparent;
+}
 
-    <main class="content">
-      <section class="card">
-        <div class="card-head">
-          <h2>Meine Reisen</h2>
-          <div id="stats" class="muted"></div>
-        </div>
+.app{
+  max-width: 560px;
+  margin:0 auto;
+  min-height:100vh;
+  padding-bottom: 86px;
+}
 
-        <div id="tripList" class="triplist"></div>
-        <div id="emptyTrips" class="empty muted">
-          Noch keine Reisen angelegt. Tippe unten rechts auf <strong>+</strong>.
-        </div>
-      </section>
-    </main>
+.top{
+  position: sticky;
+  top:0;
+  z-index: 10;
+  padding: 14px 14px 10px;
+  background: rgba(11,18,32,.92);
+  border-bottom: 1px solid rgba(34,50,80,.65);
+  backdrop-filter: blur(10px);
+}
 
-    <!-- Floating Add Button (mobil-sicher) -->
-    <button id="fabAdd" class="fab" type="button" aria-label="Neue Reise">+</button>
+.brand{display:flex; gap:12px; align-items:center;}
+.logo{
+  width:40px; height:40px;
+  border-radius: 14px;
+  display:flex; align-items:center; justify-content:center;
+  font-weight:900;
+  background: rgba(59,130,246,.16);
+  border:1px solid rgba(59,130,246,.35);
+}
+.h1{font-weight:900; font-size:18px; line-height:1.1}
+.h2{font-weight:900; font-size:16px; margin:0}
+.sub{font-size:12px}
+.small{font-size:13px}
+.tiny{font-size:12px}
+.muted{color:var(--muted)}
 
-    <!-- Editor Sheet -->
-    <section id="sheet" class="sheet hidden" aria-hidden="true">
-      <div class="sheet-backdrop" id="sheetClose"></div>
+.main{padding:14px}
 
-      <div class="sheet-panel" role="dialog" aria-modal="true">
-        <div class="sheet-head">
-          <div>
-            <div id="sheetTitle" class="sheet-title">Neue Reise</div>
-            <div id="sheetSub" class="sheet-sub muted"></div>
-          </div>
-          <button id="btnClose" class="iconbtn" type="button" aria-label="Schließen">✕</button>
-        </div>
+.view.hidden{display:none !important;}
 
-        <div class="sheet-body">
-          <div class="grid">
-            <label class="field">
-              <span>Titel</span>
-              <input id="title" placeholder="z. B. Winterurlaub" />
-            </label>
+.card{
+  background: rgba(16,26,45,.92);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+}
 
-            <label class="field">
-              <span>Land</span>
-              <select id="country"></select>
-            </label>
+.row{display:flex; align-items:center; gap:10px}
+.space{justify-content:space-between}
 
-            <label class="field">
-              <span>Start</span>
-              <input id="start" type="date" />
-            </label>
+.search{
+  width: 44%;
+  min-width: 140px;
+  padding:10px 10px;
+  border-radius: 12px;
+  border:1px solid var(--border);
+  background: rgba(11,18,32,.75);
+  color: var(--text);
+  outline:none;
+}
 
-            <label class="field">
-              <span>Ende</span>
-              <input id="end" type="date" />
-            </label>
+.tripList{display:flex; flex-direction:column; gap:10px; margin-top:12px}
+.trip{
+  border:1px solid var(--border);
+  background: rgba(11,18,32,.70);
+  border-radius: 14px;
+  padding: 12px;
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  cursor:pointer;
+}
+.tripTitle{font-weight:900}
+.tripSub{color:var(--muted); font-size:13px; margin-top:2px; line-height:1.25}
+.pill{
+  font-size:12px;
+  padding:6px 8px;
+  border-radius: 999px;
+  border:1px solid var(--border);
+  background: rgba(16,26,45,.9);
+  color: var(--text);
+  height: fit-content;
+}
+.empty{padding:10px 0}
 
-            <label class="field">
-              <span>Reiseart</span>
-              <select id="tripType">
-                <option value="city">Städtetrip</option>
-                <option value="beach">Strand</option>
-                <option value="hiking">Wandern/Natur</option>
-                <option value="ski">Ski/Winter</option>
-                <option value="roadtrip">Roadtrip</option>
-                <option value="camping">Camping</option>
-              </select>
-            </label>
+.actions{display:flex; flex-direction:column; gap:10px; margin-top:14px}
+.bigBtn{
+  width:100%;
+  padding:14px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(11,18,32,.70);
+  color: var(--text);
+  font-weight:800;
+  text-align:left;
+}
 
-            <label class="field">
-              <span>Hund dabei?</span>
-              <select id="withDog">
-                <option value="no">Nein</option>
-                <option value="yes">Ja</option>
-              </select>
-            </label>
+.climate{
+  margin-top:10px;
+  padding:10px 12px;
+  border-radius: 14px;
+  border:1px solid var(--border);
+  background: rgba(11,18,32,.65);
+  font-size: 13px;
+  color: var(--muted);
+}
 
-            <div class="field full">
-              <span>Transport</span>
-              <div class="seg">
-                <button type="button" class="segbtn" data-mode="car">🚗 Auto</button>
-                <button type="button" class="segbtn" data-mode="flight">✈️ Flug</button>
-              </div>
-            </div>
+.grid{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 12px;
+}
+.field{display:flex; flex-direction:column; gap:6px; font-size:13px; color: var(--muted)}
+.field input,.field select,.field textarea{
+  width:100%;
+  padding:12px 12px;
+  border-radius: 14px;
+  border:1px solid var(--border);
+  background: rgba(11,18,32,.75);
+  color: var(--text);
+  outline:none;
+}
+.field textarea{resize:vertical}
+.full{grid-column: 1 / -1}
 
-            <label id="airlineWrap" class="field full hidden">
-              <span>Airline (optional)</span>
-              <input id="airline" placeholder="z. B. Lufthansa" />
-            </label>
+.seg{display:flex; gap:10px}
+.segbtn{
+  flex:1;
+  padding:12px 10px;
+  border-radius: 14px;
+  border:1px solid var(--border);
+  background: rgba(11,18,32,.75);
+  color: var(--text);
+  font-weight:800;
+}
+.segbtn.active{
+  border-color: rgba(59,130,246,.85);
+  box-shadow: 0 0 0 3px rgba(59,130,246,.18);
+}
 
-            <label class="field full">
-              <span>Notizen</span>
-              <textarea id="notes" rows="3" placeholder="Hotel, Route, ToDos..."></textarea>
-            </label>
-          </div>
+.primary,.ghost,.danger{
+  padding:12px 14px;
+  border-radius:14px;
+  border:1px solid var(--border);
+  background: rgba(11,18,32,.75);
+  color: var(--text);
+  font-weight:900;
+}
+.primary{
+  background: var(--accent);
+  border-color: transparent;
+  color:#081226;
+}
+.danger{
+  background: var(--danger);
+  border-color: transparent;
+  color:#1b0a0a;
+}
 
-          <div class="card slim">
-            <h3>Hinweise & Klima</h3>
-            <div id="advice" class="advice muted">Wähle Land + Zeitraum.</div>
-          </div>
+.packList{display:flex; flex-direction:column; gap:10px; margin-top:12px}
+.packItem{
+  display:flex; align-items:center; justify-content:space-between;
+  gap:10px;
+  padding:10px 12px;
+  border:1px solid var(--border);
+  border-radius:14px;
+  background: rgba(11,18,32,.70);
+}
+.packLeft{display:flex; align-items:center; gap:10px; min-width:0}
+.packLeft input{width:18px; height:18px}
+.packText{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.packText.done{text-decoration:line-through; color:var(--muted)}
+.packDel{
+  border:1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 12px;
+  padding: 8px 10px;
+}
 
-          <div class="card slim">
-            <div class="row space">
-              <h3>Packliste</h3>
-              <button id="btnResetPack" class="ghost" type="button">Standard</button>
-            </div>
+.packAdd input{flex:1}
 
-            <div id="packList" class="packlist"></div>
+.infoBox{
+  margin-top: 12px;
+  padding:12px;
+  border-radius: 14px;
+  border:1px solid var(--border);
+  background: rgba(11,18,32,.70);
+  line-height: 1.35;
+}
 
-            <div class="row packadd">
-              <input id="packNew" placeholder="Eigenes Item hinzufügen" />
-              <button id="btnAddPack" class="primary" type="button">+</button>
-            </div>
+/* Bottom nav */
+.bottomNav{
+  position: fixed;
+  left: 0; right:0; bottom:0;
+  margin: 0 auto;
+  max-width: 560px;
+  display:flex;
+  gap:10px;
+  padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+  background: rgba(11,18,32,.95);
+  border-top: 1px solid rgba(34,50,80,.7);
+  backdrop-filter: blur(10px);
+  z-index: 20;
+}
+.navBtn{
+  flex:1;
+  padding: 12px 10px;
+  border-radius: 14px;
+  border:1px solid var(--border);
+  background: rgba(16,26,45,.9);
+  color: var(--text);
+  font-weight: 900;
+}
+.primaryNav{
+  background: var(--accent);
+  border-color: transparent;
+  color:#081226;
+}
 
-            <div class="muted tiny">Tipp: Reiseart/Hund/Land ändern passt die Packliste automatisch an.</div>
-          </div>
-        </div>
-
-        <div class="sheet-foot">
-          <button id="btnDelete" class="danger hidden" type="button">Löschen</button>
-          <button id="btnSave" class="primary" type="button">Speichern</button>
-        </div>
-      </div>
-    </section>
-
-    <footer class="footer muted">Alles wird lokal gespeichert (LocalStorage).</footer>
-  </div>
-
-  <script src="app.js"></script>
-</body>
-</html>
+@media (max-width: 420px){
+  .search{width: 46%;}
+  .grid{grid-template-columns: 1fr;}
+}
