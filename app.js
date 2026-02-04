@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const STORAGE_KEY = "urlaub_trips_separate_v1";
+const STORAGE_KEY = "urlaub_trips_separate_v2";
 
 const state = {
   trips: loadTrips(),
@@ -10,7 +10,8 @@ const state = {
   mode: "car",           // editor transport
 };
 
-const climateCache = new Map(); // key -> {min,max}
+const climateCache = new Map();  // key -> {min,max}
+const geoCache = new Map();      // countryCode -> {lat,lon}
 
 init().catch((e) => {
   console.error(e);
@@ -31,15 +32,12 @@ async function init() {
 /* ---------------- Navigation (Bottom) ---------------- */
 
 function bindNav() {
-  $("navHome").addEventListener("click", () => {
-    showView("list");
-  });
+  $("navHome").addEventListener("click", () => showView("list"));
 
   $("navBack").addEventListener("click", () => {
     if (state.navStack.length > 1) {
       state.navStack.pop();
-      const prev = state.navStack[state.navStack.length - 1];
-      state.view = prev;
+      state.view = state.navStack[state.navStack.length - 1];
       syncViews();
       renderCurrentView();
     } else {
@@ -47,9 +45,7 @@ function bindNav() {
     }
   });
 
-  $("navAdd").addEventListener("click", () => {
-    openNewTrip();
-  });
+  $("navAdd").addEventListener("click", openNewTrip);
 }
 
 function showView(view, push = true) {
@@ -95,14 +91,8 @@ function bindButtons() {
   $("search").addEventListener("input", renderList);
 
   // Detail actions
-  $("btnToPack").addEventListener("click", () => {
-    if (!state.selectedId) return;
-    showView("pack");
-  });
-  $("btnToInfo").addEventListener("click", () => {
-    if (!state.selectedId) return;
-    showView("info");
-  });
+  $("btnToPack").addEventListener("click", () => state.selectedId && showView("pack"));
+  $("btnToInfo").addEventListener("click", () => state.selectedId && showView("info"));
   $("btnToEdit").addEventListener("click", () => {
     if (!state.selectedId) return;
     openEditTrip(getTrip(state.selectedId));
@@ -134,9 +124,7 @@ function bindButtons() {
   });
 
   $("btnAddPack").addEventListener("click", addCustomPackItem);
-  $("packNew").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") addCustomPackItem();
-  });
+  $("packNew").addEventListener("keydown", (e) => e.key === "Enter" && addCustomPackItem());
 }
 
 /* ---------------- Data helpers ---------------- */
@@ -155,7 +143,13 @@ function loadTrips() {
     if (v) return JSON.parse(v);
 
     // fallback legacy keys
-    const legacy = ["urlaub_trips_clean_v1", "urlaub_trips_v7", "urlaub_trips_v6", "urlaub_trips_v5"];
+    const legacy = [
+      "urlaub_trips_separate_v1",
+      "urlaub_trips_clean_v1",
+      "urlaub_trips_v7",
+      "urlaub_trips_v6",
+      "urlaub_trips_v5",
+    ];
     for (const k of legacy) {
       const x = localStorage.getItem(k);
       if (x) return JSON.parse(x);
@@ -166,25 +160,38 @@ function loadTrips() {
   }
 }
 
-/* ---------------- Countries ---------------- */
+/* ---------------- Countries (NO API needed) ---------------- */
 
+/**
+ * Fix für "nur Buchstaben":
+ * Wir bauen die Länder-Liste offline über Intl.DisplayNames.
+ * => zeigt "Deutschland" statt "DE" selbst wenn RestCountries geblockt ist.
+ */
 async function loadCountries() {
+  // Offline first
   try {
-    const res = await fetch("https://restcountries.com/v3.1/all?fields=name,cca2,capitalInfo,latlng");
-    const data = await res.json();
-    state.countries = (Array.isArray(data) ? data : [])
-      .filter((x) => x?.cca2 && x?.name?.common)
-      .map((x) => {
-        const ll =
-          (x.capitalInfo && Array.isArray(x.capitalInfo.latlng) && x.capitalInfo.latlng.length === 2)
-            ? x.capitalInfo.latlng
-            : (Array.isArray(x.latlng) && x.latlng.length === 2 ? x.latlng : [null, null]);
-        return { cca2: x.cca2, name: x.name.common, lat: ll[0], lon: ll[1] };
-      })
-      .sort((a, b) => a.name.localeCompare(b.name, "de"));
+    if (Intl && typeof Intl.supportedValuesOf === "function") {
+      const regions = Intl.supportedValuesOf("region"); // ["DE","FR",...]
+      const dn = new Intl.DisplayNames(["de"], { type: "region" });
+
+      state.countries = regions
+        .filter((code) => /^[A-Z]{2}$/.test(code))
+        .map((code) => ({
+          cca2: code,
+          name: dn.of(code) || code,
+          lat: null,
+          lon: null,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name, "de"));
+
+      return;
+    }
   } catch {
-    state.countries = [];
+    // ignore
   }
+
+  // Fallback: minimal
+  state.countries = [];
 }
 
 function fillCountrySelect() {
@@ -205,8 +212,17 @@ function fillCountrySelect() {
 }
 
 function countryName(code) {
+  if (!code) return "";
   const c = state.countries.find((x) => x.cca2 === code);
-  return c ? c.name : (code || "");
+  if (c?.name) return c.name;
+
+  // Notfall: auch ohne Liste Namen versuchen
+  try {
+    const dn = new Intl.DisplayNames(["de"], { type: "region" });
+    return dn.of(code) || code;
+  } catch {
+    return code;
+  }
 }
 
 /* ---------------- LIST VIEW ---------------- */
@@ -221,10 +237,7 @@ function renderList() {
   const q = ($("search").value || "").trim().toLowerCase();
   const sorted = [...state.trips].sort((a, b) => (a.start || "").localeCompare(b.start || ""));
   const filtered = q
-    ? sorted.filter((t) => {
-        const name = countryName(t.countryCode);
-        return `${t.title || ""} ${name}`.toLowerCase().includes(q);
-      })
+    ? sorted.filter((t) => `${t.title || ""} ${countryName(t.countryCode)}`.toLowerCase().includes(q))
     : sorted;
 
   stats.textContent = filtered.length ? `${filtered.length} Reise(n)` : "";
@@ -264,10 +277,7 @@ function renderList() {
 
 async function renderDetail() {
   const t = getTrip(state.selectedId);
-  if (!t) {
-    showView("list");
-    return;
-  }
+  if (!t) return showView("list");
 
   $("dTitle").textContent = t.title || "Urlaub";
   const range = [t.start, t.end].filter(Boolean).join(" – ");
@@ -354,10 +364,7 @@ function saveTripFromEditor() {
   const notes = ($("notes").value || "").trim();
   const airline = ($("airline").value || "").trim();
 
-  if (!countryCode) {
-    alert("Bitte ein Land auswählen.");
-    return;
-  }
+  if (!countryCode) return alert("Bitte ein Land auswählen.");
 
   const existing = state.selectedId ? getTrip(state.selectedId) : null;
 
@@ -381,7 +388,6 @@ function saveTripFromEditor() {
     updatedAt: new Date().toISOString(),
   };
 
-  // Packliste neu berechnen, aber Done/Custom behalten
   updated.packItems = recalcPackItemsForTrip(updated);
 
   if (existing) {
@@ -399,10 +405,7 @@ function saveTripFromEditor() {
 }
 
 function deleteCurrentTrip() {
-  if (!state.selectedId) {
-    showView("list");
-    return;
-  }
+  if (!state.selectedId) return showView("list");
   if (!confirm("Diese Reise wirklich löschen?")) return;
 
   state.trips = state.trips.filter((t) => t.id !== state.selectedId);
@@ -417,10 +420,7 @@ function deleteCurrentTrip() {
 
 function renderPack() {
   const t = getTrip(state.selectedId);
-  if (!t) {
-    showView("list");
-    return;
-  }
+  if (!t) return showView("list");
 
   const list = $("packList");
   list.innerHTML = "";
@@ -489,12 +489,7 @@ function addCustomPackItem() {
   if (!val) return;
 
   if (!Array.isArray(t.packItems)) t.packItems = [];
-  t.packItems.push({
-    id: crypto.randomUUID(),
-    text: val,
-    done: false,
-    custom: true,
-  });
+  t.packItems.push({ id: crypto.randomUUID(), text: val, done: false, custom: true });
 
   $("packNew").value = "";
   persist();
@@ -505,22 +500,17 @@ function addCustomPackItem() {
 
 function packProgress(t) {
   const items = Array.isArray(t.packItems) ? t.packItems : [];
-  const total = items.length;
-  const done = items.filter((x) => x.done).length;
-  return { done, total };
+  return { total: items.length, done: items.filter((x) => x.done).length };
 }
 
 /* ---------------- INFO VIEW ---------------- */
 
 function renderInfo() {
   const t = getTrip(state.selectedId);
-  if (!t) {
-    showView("list");
-    return;
-  }
+  if (!t) return showView("list");
 
   const blocks = [];
-  blocks.push(`<b>${escapeHtml(countryName(t.countryCode))}</b> · ${escapeHtml([t.start,t.end].filter(Boolean).join(" – "))}`);
+  blocks.push(`<b>${escapeHtml(countryName(t.countryCode))}</b> · ${escapeHtml([t.start, t.end].filter(Boolean).join(" – "))}`);
 
   blocks.push(`<br><br><b>Allgemein</b><ul>
     <li>Dokumente prüfen (Gültigkeit, Kopien)</li>
@@ -544,12 +534,12 @@ function renderInfo() {
 
   if (t.withDog) {
     blocks.push(`<b>🐶 Hund</b><ul>
-      ${dogTravelHints(t.countryCode).map(x => `<li>${escapeHtml(x)}</li>`).join("")}
+      ${dogTravelHints(t.countryCode).map((x) => `<li>${escapeHtml(x)}</li>`).join("")}
     </ul>`);
   }
 
   if (t.notes) {
-    blocks.push(`<b>Notizen</b><div style="margin-top:6px">${escapeHtml(t.notes).replace(/\n/g,"<br>")}</div>`);
+    blocks.push(`<b>Notizen</b><div style="margin-top:6px">${escapeHtml(t.notes).replace(/\n/g, "<br>")}</div>`);
   }
 
   $("infoBox").innerHTML = blocks.join("");
@@ -559,10 +549,8 @@ function renderInfo() {
 
 function recalcPackItemsForTrip(t) {
   const removed = new Set((t.removedSuggestions || []).map(String));
-
   const current = Array.isArray(t.packItems) ? t.packItems.map(ensurePackShape) : [];
   const customs = current.filter((x) => x.custom === true);
-
   const doneMap = new Map(current.map((x) => [normKey(x.text), !!x.done]));
 
   const base = defaultPackItems(t.mode || "car");
@@ -670,14 +658,7 @@ function suggestedPackTexts(countryCode, tripType, withDog, month, mode) {
 }
 
 function tripTypeLabel(v) {
-  const m = {
-    city: "Stadt",
-    beach: "Strand",
-    hiking: "Natur",
-    ski: "Ski",
-    roadtrip: "Roadtrip",
-    camping: "Camping",
-  };
+  const m = { city: "Stadt", beach: "Strand", hiking: "Natur", ski: "Ski", roadtrip: "Roadtrip", camping: "Camping" };
   return m[v] || "";
 }
 
@@ -700,12 +681,16 @@ const EU_LIKE = new Set([
   "CZ","PL","SK","HU","SI","HR","RO","BG","LT","LV","EE","CY","MT"
 ]);
 
-/* ---------------- Climate averages ---------------- */
+/* ---------------- Climate averages (with geocoding fallback) ---------------- */
 
 async function loadClimateAverage(countryCode, startStr, endStr) {
   if (!countryCode || !startStr) return "";
-  const c = state.countries.find((x) => x.cca2 === countryCode);
-  if (!c || c.lat == null || c.lon == null) return "";
+
+  const coords = await getCoordsForCountry(countryCode);
+  if (!coords) return "";
+
+  const lat = coords.lat;
+  const lon = coords.lon;
 
   const start = new Date(startStr);
   const end = endStr ? new Date(endStr) : start;
@@ -721,18 +706,52 @@ async function loadClimateAverage(countryCode, startStr, endStr) {
 
   const parts = [];
   for (const mm of months) {
-    const avg = await climateMonthAvg(c.lat, c.lon, mm.y, mm.m);
+    const avg = await climateMonthAvg(lat, lon, mm.y, mm.m);
     if (avg) parts.push(`${monthNameDE(mm.m)}: ${avg.min}–${avg.max}°C`);
   }
   return parts.join(" · ");
+}
+
+async function getCoordsForCountry(countryCode) {
+  if (geoCache.has(countryCode)) return geoCache.get(countryCode);
+
+  // wenn wir es in state.countries gecached hätten (z.B. später), nutzen
+  const c = state.countries.find((x) => x.cca2 === countryCode);
+  if (c && c.lat != null && c.lon != null) {
+    const v = { lat: c.lat, lon: c.lon };
+    geoCache.set(countryCode, v);
+    return v;
+  }
+
+  // Fallback: Open-Meteo Geocoding mit Ländernamen
+  const name = countryName(countryCode);
+  if (!name) return null;
+
+  const url =
+    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}` +
+    `&count=1&language=de&format=json`;
+
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const data = await res.json();
+  const r = data?.results?.[0];
+  if (!r) return null;
+
+  const v = { lat: r.latitude, lon: r.longitude };
+  geoCache.set(countryCode, v);
+
+  // optional auch in state.countries merken
+  if (c) { c.lat = v.lat; c.lon = v.lon; }
+
+  return v;
 }
 
 async function climateMonthAvg(lat, lon, year, month) {
   const key = `${lat}|${lon}|${year}|${month}`;
   if (climateCache.has(key)) return climateCache.get(key);
 
-  const start = `${year}-${String(month).padStart(2,"0")}-01`;
-  const end = `${year}-${String(month).padStart(2,"0")}-${String(new Date(year, month, 0).getDate()).padStart(2,"0")}`;
+  const start = `${year}-${String(month).padStart(2, "0")}-01`;
+  const end = `${year}-${String(month).padStart(2, "0")}-${String(new Date(year, month, 0).getDate()).padStart(2, "0")}`;
 
   const url =
     `https://climate-api.open-meteo.com/v1/climate?latitude=${encodeURIComponent(lat)}` +
@@ -748,8 +767,8 @@ async function climateMonthAvg(lat, lon, year, month) {
   const maxs = (data?.daily?.temperature_2m_max || []).map(Number).filter(Number.isFinite);
   if (!mins.length || !maxs.length) return null;
 
-  const avgMin = Math.round(mins.reduce((a,b)=>a+b,0) / mins.length);
-  const avgMax = Math.round(maxs.reduce((a,b)=>a+b,0) / maxs.length);
+  const avgMin = Math.round(mins.reduce((a, b) => a + b, 0) / mins.length);
+  const avgMax = Math.round(maxs.reduce((a, b) => a + b, 0) / maxs.length);
 
   const out = { min: avgMin, max: avgMax };
   climateCache.set(key, out);
@@ -757,7 +776,7 @@ async function climateMonthAvg(lat, lon, year, month) {
 }
 
 function monthNameDE(m) {
-  return ["Jan","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"][m-1] || `M${m}`;
+  return ["Jan","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"][m - 1] || `M${m}`;
 }
 
 /* ---------------- Utils ---------------- */
