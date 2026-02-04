@@ -47,13 +47,13 @@ body{
 }
 .h1{font-weight:900; font-size:18px; line-height:1.1}
 .h2{font-weight:900; font-size:16px; margin:0}
+.h3{font-weight:900; font-size:14px; margin:0 0 10px}
 .sub{font-size:12px}
 .small{font-size:13px}
 .tiny{font-size:12px}
 .muted{color:var(--muted)}
 
 .main{padding:14px}
-
 .view.hidden{display:none !important;}
 
 .card{
@@ -238,6 +238,33 @@ body{
   font-size: 13px;
 }
 
+/* NEW: car route / cost */
+.cardInner{
+  border:1px solid rgba(34,50,80,.75);
+  background: rgba(11,18,32,.55);
+  border-radius: 14px;
+  padding: 12px;
+}
+.grid2{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.wideBtn{
+  width:100%;
+  margin-top: 10px;
+}
+.costBox{
+  margin-top:10px;
+  padding:12px;
+  border-radius: 14px;
+  border:1px solid rgba(34,50,80,.75);
+  background: rgba(11,18,32,.55);
+  line-height:1.35;
+  font-size: 13px;
+}
+.costBox.hidden{display:none}
+
 /* Bottom nav */
 .bottomNav{
   position: fixed;
@@ -270,4 +297,5 @@ body{
 @media (max-width: 420px){
   .search{width: 46%;}
   .grid{grid-template-columns: 1fr;}
+  .grid2{grid-template-columns: 1fr;}
 }
