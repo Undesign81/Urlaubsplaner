@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Urlaubsplaner</title>
+  <link rel="stylesheet" href="style.css" />
+  <meta name="theme-color" content="#111827" />
+</head>
+<body>
+  <main class="app">
+    <header class="top">
+      <h1>Urlaubsplaner</h1>
+      <button id="btnAdd" class="primary">+ Reise</button>
+    </header>
+
+    <section class="card">
+      <h2>Meine Reisen</h2>
+      <div id="tripList" class="list"></div>
+      <p id="emptyTrips" class="muted">Noch keine Reisen angelegt.</p>
+    </section>
+
+    <section id="editor" class="card hidden">
+      <div class="row space">
+        <h2 id="editorTitle">Neue Reise</h2>
+        <button id="btnClose" class="ghost">Schließen</button>
+      </div>
+
+      <div class="grid">
+        <label>
+          Titel
+          <input id="title" placeholder="z.B. Sommerurlaub" />
+        </label>
+
+        <label>
+          Land
+          <select id="country"></select>
+        </label>
+
+        <label>
+          Start
+          <input id="start" type="date" />
+        </label>
+
+        <label>
+          Ende
+          <input id="end" type="date" />
+        </label>
+
+        <div class="transport">
+          <span class="label">Transport</span>
+          <div class="seg">
+            <button type="button" class="segbtn" data-mode="car">Auto</button>
+            <button type="button" class="segbtn" data-mode="flight">Flugzeug</button>
+          </div>
+        </div>
+
+        <label id="airlineWrap" class="hidden">
+          Airline (optional)
+          <input id="airline" placeholder="z.B. Lufthansa" />
+        </label>
+
+        <label>
+          Notizen
+          <textarea id="notes" rows="3" placeholder="Hotel, Route, ToDos..."></textarea>
+        </label>
+      </div>
+
+      <div class="row space">
+        <button id="btnSave" class="primary">Speichern</button>
+        <button id="btnDelete" class="danger hidden">Löschen</button>
+      </div>
+
+      <hr class="sep" />
+
+      <section>
+        <h3>Das musst du beachten</h3>
+        <div id="advice" class="advice">
+          <p class="muted">Wähle Land + Zeitraum, dann lädt die App Hinweise.</p>
+        </div>
+      </section>
+    </section>
+
+    <footer class="foot muted">
+      Daten lokal auf deinem Gerät gespeichert.
+    </footer>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
