@@ -8,7 +8,7 @@ const state = {
 };
 
 let editorPackItems = [];
-let editorRemovedSuggestions = new Set(); // Texte (lowercase) die bewusst entfernt wurden
+let editorRemovedSuggestions = new Set();
 
 init();
 
@@ -28,7 +28,7 @@ function bindUI() {
   $("btnSave").addEventListener("click", saveTrip);
   $("btnDelete").addEventListener("click", deleteTrip);
 
-  ["start", "end", "country", "tripType"].forEach((id) => {
+  ["start", "end", "country", "tripType", "withDog"].forEach((id) => {
     $(id).addEventListener("change", () => {
       refreshAdvice();
       recalcPackList();
@@ -63,6 +63,7 @@ function openEditor(trip = null) {
     $("start").value = "";
     $("end").value = "";
     $("tripType").value = "city";
+    $("withDog").value = "no";
     $("notes").value = "";
     $("airline").value = "";
     $("btnDelete").classList.add("hidden");
@@ -80,6 +81,7 @@ function openEditor(trip = null) {
     $("start").value = trip.start || "";
     $("end").value = trip.end || "";
     $("tripType").value = trip.tripType || "city";
+    $("withDog").value = trip.withDog ? "yes" : "no";
     $("notes").value = trip.notes || "";
     $("airline").value = trip.airline || "";
     $("btnDelete").classList.remove("hidden");
@@ -144,11 +146,12 @@ function renderTrips() {
 
     const openInfo = buildOpenPackInfo(t);
     const typeLabel = tripTypeLabel(t.tripType);
+    const dogLabel = t.withDog ? "🐶 Hund" : "";
 
     el.innerHTML = `
       <div class="meta">
         <div class="title">${escapeHtml(t.title || "Reise")}</div>
-        <div class="sub">${escapeHtml(fmtTripSub(t))}${typeLabel ? " · " + escapeHtml(typeLabel) : ""}</div>
+        <div class="sub">${escapeHtml(fmtTripSub(t))}${typeLabel ? " · " + escapeHtml(typeLabel) : ""}${dogLabel ? " · " + dogLabel : ""}</div>
         ${openInfo ? `<div class="sub">${escapeHtml(openInfo)}</div>` : ``}
       </div>
       <div class="sub">${t.mode === "flight" ? "✈️" : "🚗"}</div>
@@ -241,6 +244,7 @@ function saveTrip() {
   const start = $("start").value;
   const end = $("end").value;
   const tripType = $("tripType").value;
+  const withDog = $("withDog").value === "yes";
   const notes = $("notes").value.trim();
   const airline = ($("airline").value || "").trim();
 
@@ -258,6 +262,7 @@ function saveTrip() {
     start,
     end,
     tripType,
+    withDog,
     mode: state.mode,
     airline: state.mode === "flight" ? airline : "",
     notes,
@@ -286,19 +291,16 @@ function deleteTrip() {
 }
 
 function persistTrips() {
-  localStorage.setItem("urlaub_trips_v6", JSON.stringify(state.trips));
+  localStorage.setItem("urlaub_trips_v7", JSON.stringify(state.trips));
 }
 
 function loadTrips() {
   try {
+    const v7 = localStorage.getItem("urlaub_trips_v7");
+    if (v7) return JSON.parse(v7);
+
     const v6 = localStorage.getItem("urlaub_trips_v6");
     if (v6) return JSON.parse(v6);
-
-    const v5 = localStorage.getItem("urlaub_trips_v5");
-    if (v5) return JSON.parse(v5);
-
-    const v4 = localStorage.getItem("urlaub_trips_v4");
-    if (v4) return JSON.parse(v4);
 
     return [];
   } catch {
@@ -306,13 +308,14 @@ function loadTrips() {
   }
 }
 
-/* ---------------- Hinweise ---------------- */
+/* ---------------- Hinweise (mit Hund-Block) ---------------- */
 
 async function refreshAdvice() {
   const countryCode = $("country").value;
   const start = $("start").value;
   const end = $("end").value;
   const airline = ($("airline").value || "").trim();
+  const withDog = $("withDog").value === "yes";
 
   const c = state.countries.find((x) => x.cca2 === countryCode);
   const countryName = c ? c.name : countryCode;
@@ -342,23 +345,67 @@ async function refreshAdvice() {
           "Flüssigkeiten/Powerbanks/Check-in Zeiten beachten",
         ];
 
+  let dogHints = [];
+  if (withDog) {
+    dogHints = dogTravelHints(countryCode);
+  }
+
   box.innerHTML = `
     <p><strong>${escapeHtml(countryName)}</strong> · ${escapeHtml(
       [start, end].filter(Boolean).join(" – ") || "Datum noch offen"
     )}</p>
+
+    <p class="muted">Checkliste:</p>
     <ul>${general.map((li) => `<li>${escapeHtml(li)}</li>`).join("")}</ul>
+
     <p><strong>${state.mode === "flight" ? "Flug" : "Auto"}</strong></p>
     <ul>${transport.map((li) => `<li>${escapeHtml(li)}</li>`).join("")}</ul>
+
+    ${
+      withDog
+        ? `<p><strong>🐶 Mit Hund</strong></p>
+           <ul>${dogHints.map((li) => `<li>${escapeHtml(li)}</li>`).join("")}</ul>`
+        : ``
+    }
   `;
 }
 
-/* ---------------- Packliste: Reiseart + Land + Saison + Transport ---------------- */
+function dogTravelHints(countryCode) {
+  const cc = (countryCode || "").toUpperCase();
+  const hints = [];
+
+  // EU/Schengen grob: EU-Heimtierausweis / Tollwut / Chip
+  if (EU_LIKE.has(cc)) {
+    hints.push(
+      "EU-Heimtierausweis, Mikrochip & gültige Tollwutimpfung prüfen",
+      "Leinen-/Maulkorbpflichten im Land/ÖPNV prüfen"
+    );
+  } else {
+    hints.push(
+      "Einreisebestimmungen für Haustiere prüfen (Impfungen, Tests, Dokumente, ggf. Quarantäne)"
+    );
+  }
+
+  // besondere Reminder
+  if (["GB", "IE"].includes(cc)) {
+    hints.push("UK/Irland: Haustier-Einreisevorgaben besonders genau prüfen (Vorab-Anmeldung möglich)");
+  }
+  if (["NO", "CH"].includes(cc)) {
+    hints.push("Schweiz/Norwegen: Tierärztliche Anforderungen & Einfuhrregeln prüfen");
+  }
+
+  hints.push("Tierarzt-Check vor Reise (v.a. wenn lange Fahrt/Flug)");
+  return hints;
+}
+
+/* ---------------- Packliste: Reiseart + Hund + Land + Saison + Transport ---------------- */
 
 function recalcPackList(force = false) {
   const countryCode = $("country")?.value || "";
   const startStr = $("start")?.value || "";
   const endStr = $("end")?.value || "";
   const tripType = $("tripType")?.value || "city";
+  const withDog = $("withDog")?.value === "yes";
 
   const current = (editorPackItems || []).map(ensurePackShape);
   const customs = current.filter((x) => x.custom === true);
@@ -368,7 +415,7 @@ function recalcPackList(force = false) {
 
   const base = defaultPackItems(state.mode);
 
-  const suggestions = suggestedPackTexts(countryCode, startStr, endStr, state.mode, tripType)
+  const suggestions = suggestedPackTexts(countryCode, startStr, endStr, state.mode, tripType, withDog)
     .filter((t) => t && t.trim().length)
     .filter((t) => !editorRemovedSuggestions.has(normKey(t)));
 
@@ -384,8 +431,7 @@ function recalcPackList(force = false) {
 
   function pushItem(it) {
     const k = normKey(it.text);
-    if (!k) return;
-    if (seen.has(k)) return;
+    if (!k || seen.has(k)) return;
     seen.add(k);
     const done = doneMap.has(k) ? doneMap.get(k) : !!it.done;
     merged.push({ id: it.id || crypto.randomUUID(), text: it.text.trim(), done, custom: it.custom === true });
@@ -399,10 +445,9 @@ function recalcPackList(force = false) {
   renderPackList();
 }
 
-function suggestedPackTexts(countryCode, startStr, endStr, mode, tripType) {
+function suggestedPackTexts(countryCode, startStr, endStr, mode, tripType, withDog) {
   const out = [];
 
-  // Saison (grob) aus Start/End
   const ref = startStr || endStr;
   const month = ref ? safeMonth(ref) : null;
 
@@ -414,12 +459,28 @@ function suggestedPackTexts(countryCode, startStr, endStr, mode, tripType) {
   if (tripType === "city") out.push("Bequeme Schuhe", "Tagesrucksack", "Powerbank");
   if (tripType === "hiking") out.push("Wanderschuhe", "Regenjacke", "Trinkflasche", "Blasenpflaster");
   if (tripType === "ski") out.push("Skibrille", "Handwärmer", "Thermounterwäsche", "Sonnencreme (Schnee)");
-  if (tripType === "roadtrip") out.push("Kfz-Ladegerät", "Offline-Karten", "Snacks/Wasser", "Playlist/Podcasts");
-  if (tripType === "camping") out.push("Taschenlampe/Stirnlampe", "Powerbank", "Mückenschutz", "Campingbesteck");
+  if (tripType === "roadtrip") out.push("Kfz-Ladegerät", "Offline-Karten", "Snacks/Wasser");
+  if (tripType === "camping") out.push("Taschenlampe/Stirnlampe", "Mückenschutz", "Campingbesteck");
 
   // Transport
   if (mode === "flight") out.push("Reise-Kopien (digital/offline)", "Kopfhörer");
   if (mode === "car") out.push("Tanken/Ladestopps planen", "Notfall-Kleingeld für Parken/Maut");
+
+  // Hund
+  if (withDog) {
+    out.push(
+      "EU-Heimtierausweis / Tierdokumente",
+      "Hund: Leine + ggf. Maulkorb",
+      "Kotbeutel",
+      "Futter + Leckerlis",
+      "Wasser & Napf (unterwegs)",
+      "Hunde-Reiseapotheke",
+      "Zeckenschutz / Flohschutz",
+      "Hundedecke / Schlafplatz"
+    );
+    if (mode === "flight") out.push("Hundetransport-Box / Airline-Regeln prüfen");
+    if (mode === "car") out.push("Hundegurt/Transportbox fürs Auto");
+  }
 
   const cc = (countryCode || "").toUpperCase();
 
@@ -429,9 +490,11 @@ function suggestedPackTexts(countryCode, startStr, endStr, mode, tripType) {
   if (["AU", "NZ"].includes(cc)) out.push("Reiseadapter Typ I (AU/NZ)");
   if (["CH"].includes(cc)) out.push("Steckeradapter Typ J (Schweiz)");
 
-  // Visa/ESTA Reminder (grob)
-  if (cc === "US") out.push("ESTA prüfen/beantragen (falls nötig)");
-  if (cc === "GB") out.push("Reisepass erforderlich (UK) – Einreisebestimmungen prüfen");
+  // Hund-Sonderländer Reminder
+  if (withDog) {
+    if (["GB","IE","NO","CH"].includes(cc)) out.push("Hund: Einreisebestimmungen im Detail prüfen (Land kann Sonderregeln haben)");
+    if (!EU_LIKE.has(cc)) out.push("Hund: Import-/Quarantäne-Regeln prüfen (Nicht-EU)");
+  }
 
   // Auto Länderhinweise
   if (mode === "car") {
@@ -442,7 +505,7 @@ function suggestedPackTexts(countryCode, startStr, endStr, mode, tripType) {
     if (cc === "ES") out.push("Spanien: Umweltzonen in Städten prüfen");
   }
 
-  // Nicht-EU Reminder (grob)
+  // Nicht-EU Reminder
   if (cc && !EU_LIKE.has(cc)) out.push("Einreisebestimmungen/Visa prüfen (Nicht-EU)");
 
   return uniqText(out);
