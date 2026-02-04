@@ -2,125 +2,149 @@
 <html lang="de">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>Urlaubsplaner</title>
   <link rel="stylesheet" href="style.css" />
-  <meta name="theme-color" content="#111827" />
+  <meta name="theme-color" content="#0b1220" />
 </head>
 <body>
-  <main class="app">
-    <header class="top">
-      <h1>Urlaubsplaner</h1>
-      <button id="btnAdd" class="primary" type="button">+ Reise</button>
-    </header>
-
-    <section class="card">
-      <h2>Meine Reisen</h2>
-      <div id="tripList" class="list"></div>
-      <p id="emptyTrips" class="muted">Noch keine Reisen angelegt.</p>
-    </section>
-
-    <section id="editor" class="card hidden">
-      <div class="row space">
-        <h2 id="editorTitle">Neue Reise</h2>
-        <button id="btnClose" class="ghost" type="button">Schließen</button>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">UP</div>
+        <div>
+          <div class="title">Urlaubsplaner</div>
+          <div class="subtitle">Reisen · Packliste · Hinweise</div>
+        </div>
       </div>
 
-      <div class="grid">
-        <label>
-          Titel
-          <input id="title" placeholder="z. B. Sommerurlaub" />
-        </label>
+      <div class="top-actions">
+        <input id="search" class="search" placeholder="Suche (Titel/Land)..." />
+      </div>
+    </header>
 
-        <label>
-          Land
-          <select id="country"></select>
-        </label>
+    <main class="content">
+      <section class="card">
+        <div class="card-head">
+          <h2>Meine Reisen</h2>
+          <div id="stats" class="muted"></div>
+        </div>
 
-        <label>
-          Start
-          <input id="start" type="date" />
-        </label>
+        <div id="tripList" class="triplist"></div>
+        <div id="emptyTrips" class="empty muted">
+          Noch keine Reisen angelegt. Tippe unten rechts auf <strong>+</strong>.
+        </div>
+      </section>
+    </main>
 
-        <label>
-          Ende
-          <input id="end" type="date" />
-        </label>
+    <!-- Floating Add Button (mobil-sicher) -->
+    <button id="fabAdd" class="fab" type="button" aria-label="Neue Reise">+</button>
 
-        <label>
-          Reiseart
-          <select id="tripType">
-            <option value="city">Städtetrip</option>
-            <option value="beach">Strand</option>
-            <option value="hiking">Wandern/Natur</option>
-            <option value="ski">Ski/Winter</option>
-            <option value="roadtrip">Roadtrip</option>
-            <option value="camping">Camping</option>
-          </select>
-        </label>
+    <!-- Editor Sheet -->
+    <section id="sheet" class="sheet hidden" aria-hidden="true">
+      <div class="sheet-backdrop" id="sheetClose"></div>
 
-        <label>
-          Hund dabei?
-          <select id="withDog">
-            <option value="no">Nein</option>
-            <option value="yes">Ja</option>
-          </select>
-        </label>
+      <div class="sheet-panel" role="dialog" aria-modal="true">
+        <div class="sheet-head">
+          <div>
+            <div id="sheetTitle" class="sheet-title">Neue Reise</div>
+            <div id="sheetSub" class="sheet-sub muted"></div>
+          </div>
+          <button id="btnClose" class="iconbtn" type="button" aria-label="Schließen">✕</button>
+        </div>
 
-        <div class="transport">
-          <span class="label">Transport</span>
-          <div class="seg">
-            <button type="button" class="segbtn" data-mode="car">Auto</button>
-            <button type="button" class="segbtn" data-mode="flight">Flugzeug</button>
+        <div class="sheet-body">
+          <div class="grid">
+            <label class="field">
+              <span>Titel</span>
+              <input id="title" placeholder="z. B. Winterurlaub" />
+            </label>
+
+            <label class="field">
+              <span>Land</span>
+              <select id="country"></select>
+            </label>
+
+            <label class="field">
+              <span>Start</span>
+              <input id="start" type="date" />
+            </label>
+
+            <label class="field">
+              <span>Ende</span>
+              <input id="end" type="date" />
+            </label>
+
+            <label class="field">
+              <span>Reiseart</span>
+              <select id="tripType">
+                <option value="city">Städtetrip</option>
+                <option value="beach">Strand</option>
+                <option value="hiking">Wandern/Natur</option>
+                <option value="ski">Ski/Winter</option>
+                <option value="roadtrip">Roadtrip</option>
+                <option value="camping">Camping</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Hund dabei?</span>
+              <select id="withDog">
+                <option value="no">Nein</option>
+                <option value="yes">Ja</option>
+              </select>
+            </label>
+
+            <div class="field full">
+              <span>Transport</span>
+              <div class="seg">
+                <button type="button" class="segbtn" data-mode="car">🚗 Auto</button>
+                <button type="button" class="segbtn" data-mode="flight">✈️ Flug</button>
+              </div>
+            </div>
+
+            <label id="airlineWrap" class="field full hidden">
+              <span>Airline (optional)</span>
+              <input id="airline" placeholder="z. B. Lufthansa" />
+            </label>
+
+            <label class="field full">
+              <span>Notizen</span>
+              <textarea id="notes" rows="3" placeholder="Hotel, Route, ToDos..."></textarea>
+            </label>
+          </div>
+
+          <div class="card slim">
+            <h3>Hinweise & Klima</h3>
+            <div id="advice" class="advice muted">Wähle Land + Zeitraum.</div>
+          </div>
+
+          <div class="card slim">
+            <div class="row space">
+              <h3>Packliste</h3>
+              <button id="btnResetPack" class="ghost" type="button">Standard</button>
+            </div>
+
+            <div id="packList" class="packlist"></div>
+
+            <div class="row packadd">
+              <input id="packNew" placeholder="Eigenes Item hinzufügen" />
+              <button id="btnAddPack" class="primary" type="button">+</button>
+            </div>
+
+            <div class="muted tiny">Tipp: Reiseart/Hund/Land ändern passt die Packliste automatisch an.</div>
           </div>
         </div>
 
-        <label id="airlineWrap" class="hidden">
-          Airline (optional)
-          <input id="airline" placeholder="z. B. Lufthansa" />
-        </label>
-
-        <label>
-          Notizen
-          <textarea id="notes" rows="3" placeholder="Hotel, Route, ToDos..."></textarea>
-        </label>
+        <div class="sheet-foot">
+          <button id="btnDelete" class="danger hidden" type="button">Löschen</button>
+          <button id="btnSave" class="primary" type="button">Speichern</button>
+        </div>
       </div>
-
-      <div class="row space">
-        <button id="btnSave" class="primary" type="button">Speichern</button>
-        <button id="btnDelete" class="danger hidden" type="button">Löschen</button>
-      </div>
-
-      <hr class="sep" />
-
-      <section>
-        <h3>Das musst du beachten</h3>
-        <div id="advice" class="advice">
-          <p class="muted">Wähle Land + Zeitraum, dann lädt die App Hinweise.</p>
-        </div>
-      </section>
-
-      <section class="pack">
-        <div class="row space">
-          <h3>Packliste (mit Checkboxen)</h3>
-          <button id="btnResetPack" class="ghost" type="button">Standard laden</button>
-        </div>
-
-        <div id="packList" class="packlist"></div>
-
-        <div class="row packadd">
-          <input id="packNew" placeholder="Eigenes Item hinzufügen (z.B. Schnorchel)" />
-          <button id="btnAddPack" class="primary" type="button">Hinzufügen</button>
-        </div>
-
-        <p class="muted small">Packliste ist pro Reise gespeichert.</p>
-      </section>
     </section>
 
-    <footer class="foot muted">
-      Daten lokal auf deinem Gerät gespeichert.
-    </footer>
-  </main>
+    <footer class="footer muted">Alles wird lokal gespeichert (LocalStorage).</footer>
+  </div>
 
   <script src="app.js"></script>
 </body>
