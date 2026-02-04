@@ -29,10 +29,7 @@ function bindUI() {
   $("btnDelete").addEventListener("click", deleteTrip);
 
   ["start", "end", "country"].forEach((id) => {
-    $(id).addEventListener("change", () => {
-      refreshAdvice();
-      // Temperaturen aktualisieren
-    });
+    $(id).addEventListener("change", refreshAdvice);
   });
 
   document.querySelectorAll(".segbtn").forEach((btn) => {
@@ -82,7 +79,6 @@ function openEditor(trip = null) {
 
     setMode(trip.mode || "car");
 
-    // Packliste: Migration/Filter, damit bei Flug nicht noch "Maut" etc. drin ist
     const packRaw =
       Array.isArray(trip.packItems) && trip.packItems.length
         ? trip.packItems
@@ -109,7 +105,7 @@ function setMode(mode) {
 
   $("airlineWrap").classList.toggle("hidden", state.mode !== "flight");
 
-  // Wenn Editor offen ist: Packliste automatisch passend machen
+  // Wenn Editor offen ist: Packliste passend machen
   const editorOpen =
     document.getElementById("editor") &&
     !document.getElementById("editor").classList.contains("hidden");
@@ -119,13 +115,9 @@ function setMode(mode) {
     if (!current || current.length === 0) {
       setEditorPackItems(defaultPackItems(state.mode));
     } else {
-      // behalten: eigene Items (custom=true)
       const customs = current.map(ensurePackShape).filter((x) => x.custom === true);
-
-      // Standard neu laden je nach Modus
       const base = defaultPackItems(state.mode);
 
-      // merge: base + customs (keine doppelten Texte)
       const seen = new Set(base.map((x) => x.text.toLowerCase().trim()));
       for (const c of customs) {
         const k = c.text.toLowerCase().trim();
@@ -137,13 +129,14 @@ function setMode(mode) {
       setEditorPackItems(base);
     }
 
-    // zusätzliche Reinigung (verhindert "Maut" im Flugmodus)
     setEditorPackItems(normalizePackItemsForMode(state.mode, getEditorPackItems()));
     renderPackList();
   }
 
   refreshAdvice();
 }
+
+/* ---------------- Übersicht: Reisenliste + offene Packliste ---------------- */
 
 function renderTrips() {
   const wrap = $("tripList");
@@ -157,16 +150,33 @@ function renderTrips() {
   for (const t of sorted) {
     const el = document.createElement("div");
     el.className = "item";
+
+    const openInfo = buildOpenPackInfo(t);
+
     el.innerHTML = `
       <div class="meta">
         <div class="title">${escapeHtml(t.title || "Reise")}</div>
-        <div class="sub">${fmtTripSub(t)}</div>
+        <div class="sub">${escapeHtml(fmtTripSub(t))}</div>
+        ${openInfo ? `<div class="sub">${escapeHtml(openInfo)}</div>` : ``}
       </div>
       <div class="sub">${t.mode === "flight" ? "✈️" : "🚗"}</div>
     `;
+
     el.addEventListener("click", () => openEditor(t));
     wrap.appendChild(el);
   }
+}
+
+function buildOpenPackInfo(trip) {
+  const items = Array.isArray(trip.packItems) ? trip.packItems.map(ensurePackShape) : [];
+  if (!items.length) return "";
+
+  const open = items.filter((x) => !x.done);
+  if (!open.length) return "✅ Alles erledigt (Packliste)";
+
+  const names = open.slice(0, 3).map((x) => x.text);
+  const more = open.length > 3 ? ` +${open.length - 3} mehr` : "";
+  return `Offen: ${open.length} – ${names.join(", ")}${more}`;
 }
 
 function fmtTripSub(t) {
@@ -176,9 +186,10 @@ function fmtTripSub(t) {
   return `${name}${range ? " · " + range : ""}`;
 }
 
+/* ---------------- Länder ---------------- */
+
 async function loadCountries() {
   try {
-    // Wir holen zusätzlich Koordinaten, damit wir Temperaturen anzeigen können
     const res = await fetch(
       "https://restcountries.com/v3.1/all?fields=name,cca2,capitalInfo,latlng"
     );
@@ -187,15 +198,16 @@ async function loadCountries() {
     state.countries = data
       .filter((x) => x.cca2 && x.name && x.name.common)
       .map((x) => {
-        // bevorzugt capitalInfo.latlng, sonst latlng
         const ll =
-          (x.capitalInfo && Array.isArray(x.capitalInfo.latlng) && x.capitalInfo.latlng.length === 2)
+          (x.capitalInfo &&
+            Array.isArray(x.capitalInfo.latlng) &&
+            x.capitalInfo.latlng.length === 2)
             ? x.capitalInfo.latlng
             : (Array.isArray(x.latlng) && x.latlng.length === 2 ? x.latlng : [null, null]);
         return { cca2: x.cca2, name: x.name.common, lat: ll[0], lon: ll[1] };
       })
       .sort((a, b) => a.name.localeCompare(b.name, "de"));
-  } catch (e) {
+  } catch {
     state.countries = [];
   }
 }
@@ -217,13 +229,15 @@ function fillCountrySelect() {
   }
 }
 
+/* ---------------- Speichern / Laden ---------------- */
+
 function saveTrip() {
   const title = $("title").value.trim();
   const countryCode = $("country").value;
   const start = $("start").value;
   const end = $("end").value;
   const notes = $("notes").value.trim();
-  const airline = $("airline").value.trim();
+  const airline = ($("airline").value || "").trim();
 
   if (!countryCode) {
     alert("Bitte ein Land auswählen.");
@@ -263,12 +277,14 @@ function deleteTrip() {
 }
 
 function persistTrips() {
-  localStorage.setItem("urlaub_trips_v3", JSON.stringify(state.trips));
+  localStorage.setItem("urlaub_trips_v4", JSON.stringify(state.trips));
 }
 
 function loadTrips() {
   try {
-    // v3 neu; falls leer, versuchen wir v2/v1 zu laden und weiter zu nutzen
+    const v4 = localStorage.getItem("urlaub_trips_v4");
+    if (v4) return JSON.parse(v4);
+
     const v3 = localStorage.getItem("urlaub_trips_v3");
     if (v3) return JSON.parse(v3);
 
@@ -284,9 +300,8 @@ function loadTrips() {
   }
 }
 
-/**
- * LIVE-DATEN + CHECKLISTE + TEMPERATUR
- */
+/* ---------------- Hinweise + Temperaturen (genauer) ---------------- */
+
 async function refreshAdvice() {
   const countryCode = $("country").value;
   const start = $("start").value;
@@ -302,14 +317,12 @@ async function refreshAdvice() {
     return;
   }
 
-  // Basis-Checkliste (immer)
   const general = [
     "Reisepass/Personalausweis prüfen (Gültigkeit, Kopie)",
     "Auslandskrankenversicherung / Notfallnummern",
     "Zahlungsmittel (Karte/Bargeld), Adapter/Stecker",
   ];
 
-  // Transport-Checkliste (WICHTIG: Auto != Flug)
   const transport =
     state.mode === "car"
       ? [
@@ -334,22 +347,22 @@ async function refreshAdvice() {
     <p><strong>${state.mode === "flight" ? "Flug" : "Auto"}</strong></p>
     <ul>${transport.map((li) => `<li>${escapeHtml(li)}</li>`).join("")}</ul>
 
-    <div id="tempBlock"><p class="muted">Lade ungefähre Temperatur…</p></div>
+    <div id="tempBlock"><p class="muted">Lade Temperatur (genauer)…</p></div>
     <div id="aaBlock"><p class="muted">Lade Live-Daten (Auswärtiges Amt)…</p></div>
   `;
 
-  // 1) Temperaturen (ungefähr): Startmonat (falls vorhanden)
+  // Temperatur (genauer)
   const tempBlock = $("tempBlock");
   try {
-    const tempText = await getApproxTemperatureText(countryCode, start || end);
+    const tempText = await getTemperatureForTrip(countryCode, start, end);
     tempBlock.innerHTML = tempText
       ? `<p><strong>Ungefähre Temperaturen</strong></p><p class="muted">${escapeHtml(tempText)}</p>`
-      : `<p class="muted">Temperatur: bitte ein Start- oder Enddatum setzen.</p>`;
+      : `<p class="muted">Temperatur: bitte Startdatum (und idealerweise Enddatum) setzen.</p>`;
   } catch {
     tempBlock.innerHTML = `<p class="muted">Konnte Temperatur gerade nicht laden.</p>`;
   }
 
-  // 2) Live-Daten: Auswärtiges Amt (über travelwarning.api.bund.dev)
+  // Live-Daten (AA-Wrapper) – wenn bei dir am Handy klappt, passt es.
   const aaBlock = $("aaBlock");
   try {
     const url = `https://travelwarning.api.bund.dev/country/${encodeURIComponent(countryCode)}`;
@@ -357,18 +370,10 @@ async function refreshAdvice() {
     if (!res.ok) throw new Error("AA API not ok");
     const data = await res.json();
 
-    // Robust lesen (Struktur kann variieren)
     const title = data?.title || data?.country?.name || "Reise- & Sicherheitshinweise";
     const updated = data?.date || data?.updatedAt || "";
     const link = data?.url || data?.link || data?.source || "";
-
-    // Häufig: sehr langer Text -> gekürzt
-    const text =
-      data?.content ||
-      data?.warning ||
-      data?.text ||
-      data?.data ||
-      "";
+    const text = data?.content || data?.warning || data?.text || "";
 
     aaBlock.innerHTML = `
       <p><strong>Live-Daten: ${escapeHtml(title)}</strong> ${
@@ -381,39 +386,46 @@ async function refreshAdvice() {
           : `<p class="muted">Quelle: Auswärtiges Amt (OpenData)</p>`
       }
     `;
-  } catch (e) {
+  } catch {
     aaBlock.innerHTML = `
       <p class="muted">
-        Konnte Live-Daten gerade nicht laden (Netz/CORS/Service).
-        Die Checklisten & Packliste funktionieren trotzdem.
+        Konnte Live-Daten gerade nicht laden (Desktop blockt evtl. CORS/Adblock).
       </p>
     `;
   }
 }
 
-// ----------------- Temperaturen (Open-Meteo) -----------------
+/* --- Temperatur: Reisezeitraum genauer --- */
 
-async function getApproxTemperatureText(countryCode, dateStr) {
-  if (!dateStr) return "";
+async function getTemperatureForTrip(countryCode, startStr, endStr) {
+  if (!startStr && !endStr) return "";
+
   const c = state.countries.find((x) => x.cca2 === countryCode);
   if (!c || c.lat == null || c.lon == null) return "";
 
-  const d = new Date(dateStr);
-  if (Number.isNaN(d.getTime())) return "";
-  const month = d.getMonth() + 1;
+  const start = startStr ? new Date(startStr) : null;
+  const end = endStr ? new Date(endStr) : null;
 
-  // Wenn Datum innerhalb der nächsten 16 Tage liegt -> Forecast (genauer)
+  if (start && Number.isNaN(start.getTime())) return "";
+  if (end && Number.isNaN(end.getTime())) return "";
+
+  const s = start || end;
+  const e = end || start || end;
+
   const now = new Date();
-  const diffDays = Math.ceil((d - now) / (1000 * 60 * 60 * 24));
-  if (diffDays >= -1 && diffDays <= 16) {
-    return await getForecastTempText(c.lat, c.lon, dateStr);
+  const diffS = Math.ceil((s - now) / 86400000);
+  const diffE = Math.ceil((e - now) / 86400000);
+
+  // innerhalb 16 Tage: Forecast Range
+  if (diffS >= -1 && diffE <= 16) {
+    return await getForecastRangeTempText(c.lat, c.lon, toISODate(s), toISODate(e));
   }
 
-  // Sonst: "ungefähr" über Climate API (repräsentativer Monat im Jahr 2020)
-  return await getClimateMonthTempText(c.lat, c.lon, month);
+  // weiter weg: Monatswerte (grob), über Monate aufgeteilt
+  return await getClimateByMonthsTempText(c.lat, c.lon, s, e);
 }
 
-async function getForecastTempText(lat, lon, dateStr) {
+async function getForecastRangeTempText(lat, lon, startISO, endISO) {
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lat)}` +
     `&longitude=${encodeURIComponent(lon)}` +
@@ -427,20 +439,41 @@ async function getForecastTempText(lat, lon, dateStr) {
   const tmax = data?.daily?.temperature_2m_max || [];
   const tmin = data?.daily?.temperature_2m_min || [];
 
-  const idx = times.indexOf(dateStr);
-  if (idx === -1) {
-    // wenn nicht exakt: nimm ersten Tag der Liste
-    if (times.length && tmax.length && tmin.length) {
-      return `In den nächsten Tagen etwa ${Math.round(tmin[0])}–${Math.round(tmax[0])}°C (Vorhersage).`;
-    }
-    return "";
-  }
+  const startIdx = times.indexOf(startISO);
+  if (startIdx === -1) return "";
 
-  return `Am ${dateStr} etwa ${Math.round(tmin[idx])}–${Math.round(tmax[idx])}°C (Vorhersage).`;
+  let endIdx = times.indexOf(endISO);
+  if (endIdx === -1) endIdx = startIdx;
+
+  const a = startIdx;
+  const b = Math.max(startIdx, endIdx);
+
+  const mins = tmin.slice(a, b + 1).map(Number).filter(Number.isFinite);
+  const maxs = tmax.slice(a, b + 1).map(Number).filter(Number.isFinite);
+
+  if (!mins.length || !maxs.length) return "";
+
+  const minLow = Math.min(...mins);
+  const maxHigh = Math.max(...maxs);
+  const minAvg = avg(mins);
+  const maxAvg = avg(maxs);
+
+  if (a === b) return `Am ${startISO} etwa ${Math.round(minLow)}–${Math.round(maxHigh)}°C (Vorhersage).`;
+
+  return `Reisezeitraum: im Schnitt ca. ${Math.round(minAvg)}–${Math.round(maxAvg)}°C, Spannweite etwa ${Math.round(minLow)}–${Math.round(maxHigh)}°C (Vorhersage).`;
 }
 
-async function getClimateMonthTempText(lat, lon, month) {
-  const year = 2020; // Referenzjahr (nur als "ungefähre" Orientierung)
+async function getClimateByMonthsTempText(lat, lon, start, end) {
+  const months = enumerateMonths(start, end);
+  const parts = [];
+  for (const mm of months) {
+    const txt = await getClimateMonthTempText(lat, lon, mm.y, mm.m);
+    if (txt) parts.push(`${monthNameDE(mm.m)}: ${txt}`);
+  }
+  return parts.join(" · ");
+}
+
+async function getClimateMonthTempText(lat, lon, year, month) {
   const start = `${year}-${String(month).padStart(2, "0")}-01`;
   const end = `${year}-${String(month).padStart(2, "0")}-${String(daysInMonth(year, month)).padStart(2, "0")}`;
 
@@ -449,8 +482,7 @@ async function getClimateMonthTempText(lat, lon, month) {
     `&longitude=${encodeURIComponent(lon)}` +
     `&start_date=${start}&end_date=${end}` +
     `&models=MPI_ESM1_2_XR` +
-    `&daily=temperature_2m_max,temperature_2m_min` +
-    `&timezone=auto`;
+    `&daily=temperature_2m_max,temperature_2m_min&timezone=auto`;
 
   const res = await fetch(url);
   if (!res.ok) throw new Error("climate not ok");
@@ -458,26 +490,48 @@ async function getClimateMonthTempText(lat, lon, month) {
 
   const tmax = data?.daily?.temperature_2m_max || [];
   const tmin = data?.daily?.temperature_2m_min || [];
-
   if (!tmax.length || !tmin.length) return "";
 
-  const avgMax = average(tmax);
-  const avgMin = average(tmin);
-
-  return `Im Reise-Monat ungefähr ${Math.round(avgMin)}–${Math.round(avgMax)}°C (grobe Orientierung).`;
+  const avgMax = avg(tmax.map(Number).filter(Number.isFinite));
+  const avgMin = avg(tmin.map(Number).filter(Number.isFinite));
+  return `≈ ${Math.round(avgMin)}–${Math.round(avgMax)}°C`;
 }
 
-function average(arr) {
+function enumerateMonths(start, end) {
+  const out = [];
+  const d = new Date(start.getFullYear(), start.getMonth(), 1);
+  const last = new Date(end.getFullYear(), end.getMonth(), 1);
+  while (d <= last) {
+    out.push({ y: d.getFullYear(), m: d.getMonth() + 1 });
+    d.setMonth(d.getMonth() + 1);
+  }
+  return out;
+}
+
+function monthNameDE(m) {
+  const names = ["Jan","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"];
+  return names[m - 1] || `Monat ${m}`;
+}
+
+function toISODate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function avg(arr) {
+  if (!arr.length) return 0;
   let s = 0;
-  for (const v of arr) s += Number(v) || 0;
+  for (const v of arr) s += v;
   return s / arr.length;
 }
 
 function daysInMonth(year, month) {
-  return new Date(year, month, 0).getDate(); // month: 1..12
+  return new Date(year, month, 0).getDate();
 }
 
-// ----------------- Packliste -----------------
+/* ---------------- Packliste ---------------- */
 
 function defaultPackItems(mode) {
   const general = [
@@ -519,8 +573,6 @@ function normalizePackItemsForMode(mode, items) {
   const carDefaults = new Set(defaultPackItems("car").map((x) => x.text.toLowerCase().trim()));
   const flightDefaults = new Set(defaultPackItems("flight").map((x) => x.text.toLowerCase().trim()));
 
-  // Flug: Auto-Defaults raus, wenn nicht custom
-  // Auto: Flug-Defaults raus, wenn nicht custom
   const dropSet = mode === "flight" ? carDefaults : flightDefaults;
   const keepSet = mode === "flight" ? flightDefaults : carDefaults;
 
@@ -530,10 +582,8 @@ function normalizePackItemsForMode(mode, items) {
   for (const it of shaped) {
     const key = it.text.toLowerCase().trim();
 
-    // wenn ein "falscher" Default (Maut etc.) und nicht custom -> weg
     if (dropSet.has(key) && !keepSet.has(key) && it.custom !== true) continue;
 
-    // wenn unbekannt und custom nicht gesetzt -> als custom behandeln
     if (!carDefaults.has(key) && !flightDefaults.has(key) && it.custom !== true) {
       it.custom = true;
     }
@@ -587,6 +637,8 @@ function renderPackList() {
     cb.addEventListener("change", () => {
       item.done = cb.checked;
       renderPackList();
+      // wenn schon gespeichert: Liste aktualisiert sich beim Speichern,
+      // hier nur UI-Refresh
     });
 
     const text = document.createElement("div");
@@ -627,7 +679,7 @@ function addPackItemFromInput() {
   renderPackList();
 }
 
-// ----------------- Helpers -----------------
+/* ---------------- Helpers ---------------- */
 
 function shorten(s, n) {
   s = (s || "").trim();
@@ -653,6 +705,5 @@ function escapeHtml(s) {
 }
 
 function escapeAttr(s) {
-  // minimal sicher für href (wir vertrauen dem Link, aber escapen dennoch Quotes)
   return String(s ?? "").replace(/"/g, "%22").replace(/'/g, "%27");
 }
