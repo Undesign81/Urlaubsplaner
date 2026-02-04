@@ -43,8 +43,6 @@
           <div class="muted" id="dSub">—</div>
           <div class="climate" id="dClimate"></div>
 
-          <div id="dCostBox" class="costBox hidden"></div>
-
           <div class="actions">
             <button class="bigBtn" id="btnToPack">🧳 Packliste</button>
             <button class="bigBtn" id="btnToInfo">ℹ️ Hinweise</button>
@@ -149,54 +147,6 @@
               </div>
             </div>
 
-            <!-- AUTO: Route & Kosten -->
-            <div id="carFields" class="full hidden">
-              <div class="cardInner">
-                <div class="h3">🚗 Route & Kosten</div>
-
-                <div class="grid2">
-                  <label class="field">
-                    <span>Startpunkt</span>
-                    <input id="routeFrom" placeholder="z. B. Moers" />
-                  </label>
-                  <label class="field">
-                    <span>Zielort</span>
-                    <input id="routeTo" placeholder="z. B. Split" />
-                  </label>
-
-                  <label class="field">
-                    <span>Personen</span>
-                    <input id="persons" type="number" min="1" step="1" value="2" />
-                  </label>
-
-                  <label class="field">
-                    <span>Verbrauch (l/100 km)</span>
-                    <input id="consumption" type="number" min="0" step="0.1" value="6.5" />
-                  </label>
-
-                  <label class="field">
-                    <span>Spritpreis (€/l)</span>
-                    <input id="fuelPrice" type="number" min="0" step="0.01" value="1.80" />
-                  </label>
-
-                  <label class="field">
-                    <span>Nahrung €/Person/Tag</span>
-                    <input id="foodPerPersonDay" type="number" min="0" step="0.5" value="35" />
-                  </label>
-
-                  <label class="field full">
-                    <span>Mautkosten (optional, €)</span>
-                    <input id="tollManual" type="number" min="0" step="1" placeholder="z. B. 60" />
-                  </label>
-                </div>
-
-                <button id="btnCalcRoute" class="primary wideBtn" type="button">Route & Kosten berechnen</button>
-
-                <div id="routeResult" class="muted small" style="margin-top:10px"></div>
-              </div>
-            </div>
-
-            <!-- FLIGHT -->
             <label id="airlineWrap" class="field full hidden">
               <span>Airline (optional)</span>
               <input id="airline" placeholder="z. B. Lufthansa" />
