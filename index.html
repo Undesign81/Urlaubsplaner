@@ -93,12 +93,17 @@
           <div class="grid">
             <label class="field">
               <span>Titel</span>
-              <input id="title" placeholder="z. B. Winterurlaub" />
+              <input id="title" placeholder="z. B. Sommerurlaub" />
             </label>
 
             <label class="field">
               <span>Land</span>
               <select id="country"></select>
+            </label>
+
+            <label class="field full">
+              <span>Stadt/Ort (für Temperatur)</span>
+              <input id="city" placeholder="z. B. Split, Dubrovnik, Zagreb" />
             </label>
 
             <label class="field">
@@ -156,7 +161,7 @@
           </div>
 
           <div class="muted tiny" style="margin-top:10px">
-            Hinweis: Packliste/Hinweise werden separat angezeigt (eigene Seiten).
+            Temperatur wird anhand der Stadt berechnet (Ø Tageshöchstwerte, letzte 10 vollen Jahre).
           </div>
         </div>
       </section>
