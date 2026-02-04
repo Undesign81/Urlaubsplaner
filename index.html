@@ -23,7 +23,7 @@
     <section id="editor" class="card hidden">
       <div class="row space">
         <h2 id="editorTitle">Neue Reise</h2>
-        <button id="btnClose" class="ghost">Schließen</button>
+        <button id="btnClose" class="ghost" type="button">Schließen</button>
       </div>
 
       <div class="grid">
@@ -62,41 +62,43 @@
 
         <label>
           Notizen
-          <textarea id="notes" rows="3"></textarea>
+          <textarea id="notes" rows="3" placeholder="Hotel, Route, ToDos..."></textarea>
         </label>
       </div>
 
       <div class="row space">
-        <button id="btnSave" class="primary">Speichern</button>
-        <button id="btnDelete" class="danger hidden">Löschen</button>
+        <button id="btnSave" class="primary" type="button">Speichern</button>
+        <button id="btnDelete" class="danger hidden" type="button">Löschen</button>
       </div>
 
       <hr class="sep" />
 
       <section>
         <h3>Das musst du beachten</h3>
-        <div id="advice" class="advice"></div>
+        <div id="advice" class="advice">
+          <p class="muted">Wähle Land + Zeitraum, dann lädt die App Hinweise.</p>
+        </div>
       </section>
 
       <section class="pack">
         <div class="row space">
-          <h3>Packliste</h3>
+          <h3>Packliste (mit Checkboxen)</h3>
           <button id="btnResetPack" class="ghost" type="button">Standard laden</button>
         </div>
 
         <div id="packList" class="packlist"></div>
 
         <div class="row packadd">
-          <input id="packNew" placeholder="Eigenes Item hinzufügen" />
+          <input id="packNew" placeholder="Eigenes Item hinzufügen (z.B. Schnorchel)" />
           <button id="btnAddPack" class="primary" type="button">Hinzufügen</button>
         </div>
 
-        <p class="muted small">Alles wird pro Reise gespeichert.</p>
+        <p class="muted small">Packliste ist pro Reise gespeichert.</p>
       </section>
     </section>
 
     <footer class="foot muted">
-      Daten bleiben lokal auf deinem Gerät.
+      Daten lokal auf deinem Gerät gespeichert.
     </footer>
   </main>
 
