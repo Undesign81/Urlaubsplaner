@@ -1,5 +1,3 @@
-// app.js (komplett)
-
 const $ = (id) => document.getElementById(id);
 
 const state = {
@@ -11,7 +9,6 @@ const state = {
 
 // Packlisten-Zustand (nur im Editor)
 let editorPackItems = [];
-let editorDirty = false;
 
 init();
 
@@ -19,57 +16,58 @@ async function init() {
   bindUI();
   renderTrips();
 
-  // Länder laden (alle)
   await loadCountries();
   fillCountrySelect();
 
-  // Default Transport UI
+  // Standardmodus setzen (markiert Buttons)
   setMode("car");
 }
 
 function bindUI() {
-  $("btnAdd")?.addEventListener("click", () => openEditor());
-  $("btnClose")?.addEventListener("click", closeEditor);
-  $("btnSave")?.addEventListener("click", saveTrip);
-  $("btnDelete")?.addEventListener("click", deleteTrip);
+  $("btnAdd").addEventListener("click", () => openEditor());
+  $("btnClose").addEventListener("click", closeEditor);
+  $("btnSave").addEventListener("click", saveTrip);
+  $("btnDelete").addEventListener("click", deleteTrip);
 
   ["start", "end", "country"].forEach((id) => {
-    $(id)?.addEventListener("change", refreshAdvice);
+    $(id).addEventListener("change", refreshAdvice);
   });
 
   document.querySelectorAll(".segbtn").forEach((btn) => {
     btn.addEventListener("click", () => setMode(btn.dataset.mode));
   });
 
-  $("airline")?.addEventListener("input", refreshAdvice);
+  $("airline").addEventListener("input", refreshAdvice);
 
   // Packliste
-  $("btnAddPack")?.addEventListener("click", addPackItemFromInput);
-  $("packNew")?.addEventListener("keydown", (e) => {
+  $("btnAddPack").addEventListener("click", addPackItemFromInput);
+  $("packNew").addEventListener("keydown", (e) => {
     if (e.key === "Enter") addPackItemFromInput();
   });
-  $("btnResetPack")?.addEventListener("click", () => {
+  $("btnResetPack").addEventListener("click", () => {
     setEditorPackItems(defaultPackItems(state.mode));
     renderPackList();
-    markEditorDirty();
   });
 }
 
 function openEditor(trip = null) {
-  $("editor")?.classList.remove("hidden");
-  editorDirty = false;
+  $("editor").classList.remove("hidden");
 
   if (!trip) {
     state.editingId = null;
     $("editorTitle").textContent = "Neue Reise";
     $("title").value = "";
+    $("country").value = "";
     $("start").value = "";
     $("end").value = "";
     $("notes").value = "";
     $("airline").value = "";
     $("btnDelete").classList.add("hidden");
 
+    // Standard: Auto
     setMode("car");
+
+    // Packliste sofort setzen + anzeigen
     setEditorPackItems(defaultPackItems(state.mode));
     renderPackList();
   } else {
@@ -84,11 +82,13 @@ function openEditor(trip = null) {
     $("btnDelete").classList.remove("hidden");
 
     setMode(trip.mode || "car");
-    setEditorPackItems(
-      Array.isArray(trip.packItems) && trip.packItems.length
-        ? trip.packItems
-        : defaultPackItems(state.mode)
-    );
+
+    // Packliste laden (falls keine gespeichert: Standard)
+    const pack = Array.isArray(trip.packItems) && trip.packItems.length
+      ? trip.packItems
+      : defaultPackItems(state.mode);
+
+    setEditorPackItems(pack);
     renderPackList();
   }
 
@@ -96,25 +96,33 @@ function openEditor(trip = null) {
 }
 
 function closeEditor() {
-  $("editor")?.classList.add("hidden");
+  $("editor").classList.add("hidden");
 }
 
 function setMode(mode) {
   state.mode = mode;
 
-  document
-    .querySelectorAll(".segbtn")
-    .forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
+  document.querySelectorAll(".segbtn").forEach((b) =>
+    b.classList.toggle("active", b.dataset.mode === mode)
+  );
 
-  $("airlineWrap")?.classList.toggle("hidden", mode !== "flight");
+  $("airlineWrap").classList.toggle("hidden", mode !== "flight");
 
-  // Wenn gerade eine neue Reise erstellt wird und noch keine Packliste existiert:
-  if (!state.editingId) {
-    const current = getEditorPackItems();
+  // WICHTIG: Wenn du im Editor bist und wechselst Auto/Flug:
+  // Packliste automatisch mit transport-spezifischen Standardpunkten ergänzen,
+  // aber bestehende eigene Items behalten.
+  const current = getEditorPackItems();
+  if (document.getElementById("editor") && !document.getElementById("editor").classList.contains("hidden")) {
     if (!current || current.length === 0) {
       setEditorPackItems(defaultPackItems(mode));
-      renderPackList();
+    } else {
+      // Nur Standardteile neu setzen, eigene Items behalten:
+      const extras = current.filter(x => x.custom === true);
+      const base = defaultPackItems(mode);
+      const merged = base.concat(extras);
+      setEditorPackItems(merged);
     }
+    renderPackList();
   }
 
   refreshAdvice();
@@ -122,10 +130,8 @@ function setMode(mode) {
 
 function renderTrips() {
   const wrap = $("tripList");
-  if (!wrap) return;
-
   wrap.innerHTML = "";
-  $("emptyTrips")?.classList.toggle("hidden", state.trips.length !== 0);
+  $("emptyTrips").classList.toggle("hidden", state.trips.length !== 0);
 
   const sorted = [...state.trips].sort((a, b) =>
     (a.start || "").localeCompare(b.start || "")
@@ -148,16 +154,14 @@ function renderTrips() {
 
 function fmtTripSub(t) {
   const c = state.countries.find((x) => x.cca2 === t.countryCode);
-  const name = c ? c.name : t.countryCode || "";
+  const name = c ? c.name : (t.countryCode || "");
   const range = [t.start, t.end].filter(Boolean).join(" – ");
   return `${name}${range ? " · " + range : ""}`;
 }
 
 async function loadCountries() {
   try {
-    const res = await fetch(
-      "https://restcountries.com/v3.1/all?fields=name,cca2"
-    );
+    const res = await fetch("https://restcountries.com/v3.1/all?fields=name,cca2");
     const data = await res.json();
     state.countries = data
       .filter((x) => x.cca2 && x.name && x.name.common)
@@ -170,8 +174,6 @@ async function loadCountries() {
 
 function fillCountrySelect() {
   const sel = $("country");
-  if (!sel) return;
-
   sel.innerHTML = "";
 
   const opt0 = document.createElement("option");
@@ -233,34 +235,29 @@ function deleteTrip() {
 }
 
 function persistTrips() {
-  localStorage.setItem("urlaub_trips_v1", JSON.stringify(state.trips));
+  localStorage.setItem("urlaub_trips_v2", JSON.stringify(state.trips));
 }
 
 function loadTrips() {
   try {
-    return JSON.parse(localStorage.getItem("urlaub_trips_v1") || "[]");
+    return JSON.parse(localStorage.getItem("urlaub_trips_v2") || "[]");
   } catch {
     return [];
   }
 }
 
-/**
- * Hinweise laden:
- * - Basis: Auswärtiges Amt OpenData (über eine öffentliche API, die die OpenData nutzt).
- *   Falls das bei dir wegen CORS/Netz nicht klappt, zeigt die App trotzdem Checklisten.
- */
+// -------- Hinweise / Advice --------
+
 async function refreshAdvice() {
-  const countryCode = $("country")?.value || "";
-  const start = $("start")?.value || "";
-  const end = $("end")?.value || "";
-  const airline = $("airline")?.value?.trim?.() || "";
+  const countryCode = $("country").value;
+  const start = $("start").value;
+  const end = $("end").value;
+  const airline = $("airline").value.trim();
 
   const c = state.countries.find((x) => x.cca2 === countryCode);
   const countryName = c ? c.name : countryCode;
 
   const box = $("advice");
-  if (!box) return;
-
   if (!countryCode) {
     box.innerHTML = `<p class="muted">Wähle ein Land, dann erscheinen die Hinweise.</p>`;
     return;
@@ -289,27 +286,17 @@ async function refreshAdvice() {
 
   box.innerHTML = `
     <p><strong>${escapeHtml(countryName)}</strong> · ${escapeHtml(
-    [start, end].filter(Boolean).join(" – ") || "Datum noch offen"
-  )}</p>
-    <p class="muted">Automatische Hinweise (Sicherheit/Einreise/Regeln) + transportabhängige Checkliste:</p>
-    <ul>
-      ${general.map((li) => `<li>${escapeHtml(li)}</li>`).join("")}
-    </ul>
+      [start, end].filter(Boolean).join(" – ") || "Datum noch offen"
+    )}</p>
+    <ul>${general.map((li) => `<li>${escapeHtml(li)}</li>`).join("")}</ul>
     <p><strong>${state.mode === "flight" ? "Flug" : "Auto"}</strong></p>
-    <ul>
-      ${transport.map((li) => `<li>${escapeHtml(li)}</li>`).join("")}
-    </ul>
+    <ul>${transport.map((li) => `<li>${escapeHtml(li)}</li>`).join("")}</ul>
     <div id="aaBlock"><p class="muted">Lade Auswärtiges Amt Hinweise…</p></div>
   `;
 
   const aaBlock = $("aaBlock");
-  if (!aaBlock) return;
-
   try {
-    // Wrapper-API für Auswärtiges Amt OpenData
-    const url = `https://travelwarning.api.bund.dev/country/${encodeURIComponent(
-      countryCode
-    )}`;
+    const url = `https://travelwarning.api.bund.dev/country/${encodeURIComponent(countryCode)}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error("AA API not ok");
     const data = await res.json();
@@ -320,41 +307,22 @@ async function refreshAdvice() {
 
     aaBlock.innerHTML = `
       <p><strong>${escapeHtml(title)}</strong> ${
-      updated ? `<span class="muted">(${escapeHtml(updated)})</span>` : ""
-    }</p>
+        updated ? `<span class="muted">(${escapeHtml(updated)})</span>` : ""
+      }</p>
       <p class="muted">Quelle: Auswärtiges Amt (OpenData)</p>
-      <div class="muted" style="white-space:pre-wrap; line-height:1.4">${escapeHtml(
-        shorten(text, 1200)
-      )}</div>
+      <div class="muted" style="white-space:pre-wrap; line-height:1.4">${escapeHtml(shorten(text, 1200))}</div>
       ${text && text.length > 1200 ? `<p class="muted">…gekürzt.</p>` : ""}
     `;
   } catch (e) {
     aaBlock.innerHTML = `
       <p class="muted">
-        Konnte Live-Hinweise gerade nicht laden (z.B. Netz/CORS).
-        Die Checkliste oben funktioniert trotzdem.
+        Konnte Live-Hinweise gerade nicht laden (Netz/CORS). Checkliste funktioniert trotzdem.
       </p>
     `;
   }
 }
 
-function shorten(s, n) {
-  s = (s || "").trim();
-  if (s.length <= n) return s;
-  return s.slice(0, n).trim() + " …";
-}
-
-function escapeHtml(s) {
-  return String(s ?? "").replace(/[&<>"']/g, (m) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#039;",
-  })[m]);
-}
-
-// ---------- Packliste ----------
+// -------- Packliste --------
 
 function defaultPackItems(mode) {
   const general = [
@@ -386,6 +354,7 @@ function defaultPackItems(mode) {
     id: crypto.randomUUID(),
     text,
     done: false,
+    custom: false,
   }));
 }
 
@@ -399,13 +368,11 @@ function getEditorPackItems() {
 
 function renderPackList() {
   const wrap = $("packList");
-  if (!wrap) return;
-
   wrap.innerHTML = "";
 
   const items = getEditorPackItems();
   if (!items || items.length === 0) {
-    wrap.innerHTML = `<p class="muted">Noch keine Items. Füge welche hinzu oder lade Standard.</p>`;
+    wrap.innerHTML = `<p class="muted">Noch keine Items. „Standard laden“ oder eigene Items hinzufügen.</p>`;
     return;
   }
 
@@ -422,7 +389,6 @@ function renderPackList() {
     cb.addEventListener("change", () => {
       item.done = cb.checked;
       renderPackList();
-      markEditorDirty();
     });
 
     const text = document.createElement("div");
@@ -439,7 +405,6 @@ function renderPackList() {
     del.addEventListener("click", () => {
       editorPackItems = editorPackItems.filter((x) => x.id !== item.id);
       renderPackList();
-      markEditorDirty();
     });
 
     row.appendChild(left);
@@ -450,15 +415,34 @@ function renderPackList() {
 
 function addPackItemFromInput() {
   const inp = $("packNew");
-  const val = (inp?.value || "").trim();
+  const val = (inp.value || "").trim();
   if (!val) return;
 
-  editorPackItems.push({ id: crypto.randomUUID(), text: val, done: false });
+  editorPackItems.push({
+    id: crypto.randomUUID(),
+    text: val,
+    done: false,
+    custom: true,
+  });
+
   inp.value = "";
   renderPackList();
-  markEditorDirty();
 }
 
-function markEditorDirty() {
-  editorDirty = true;
+// -------- Helpers --------
+
+function shorten(s, n) {
+  s = (s || "").trim();
+  if (s.length <= n) return s;
+  return s.slice(0, n).trim() + " …";
+}
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (m) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#039;",
+  })[m]);
 }
